@@ -93,6 +93,9 @@ public:
 
   /* Subtitle for display */
   std::string subtitle() const { return ""; }
+
+  /* Subtract common prefix (required by TransportSender) */
+  void subtract( const MockState* prefix ) { /* No-op for simple string state */ }
 };
 
 void print_usage( const char* progname )
@@ -113,11 +116,15 @@ void print_usage( const char* progname )
 int run_server( const char* port )
 {
   printf( "Starting test server on port %s...\n", port );
+  fflush( stdout );
 
   try {
     /* Create initial states */
     MockState local_state( "Server: Ready" );
     MockState remote_state;
+
+    printf( "Creating transport...\n" );
+    fflush( stdout );
 
     /* Create server transport */
     using TestTransport = Network::Transport<MockState, MockState>;
@@ -126,8 +133,9 @@ int run_server( const char* port )
     printf( "Server listening on port %s\n", transport.port().c_str() );
     printf( "Connection key: %s\n", transport.get_key().c_str() );
     printf( "\nWaiting for client connection...\n" );
-    printf( "Client command: %s client localhost %s %s\n\n", program_invocation_name, transport.port().c_str(),
+    printf( "Client command: test-connection client localhost %s %s\n\n", transport.port().c_str(),
             transport.get_key().c_str() );
+    fflush( stdout );
 
     /* Main loop */
     int count = 0;
@@ -309,6 +317,9 @@ int run_client( const char* host, const char* port, const char* key )
 
 int main( int argc, char* argv[] )
 {
+  fprintf( stderr, "test-connection starting...\n" );
+  fflush( stderr );
+
   if ( argc < 2 ) {
     print_usage( argv[0] );
     return 1;

@@ -74,7 +74,7 @@ is_utf8_locale_LDADD = ../util/libmoshutil.a $(LIBUTIL)
 
 test_connection_SOURCES = test-connection.cc
 test_connection_CPPFLAGS = -I$(srcdir)/../network -I$(srcdir)/../crypto -I$(srcdir)/../util -I$(top_srcdir)/ $(CRYPTO_CFLAGS) $(protobuf_CFLAGS)
-test_connection_LDADD = ../network/libmoshnetwork.a ../crypto/libmoshcrypto.a ../util/libmoshutil.a $(CRYPTO_LIBS) $(protobuf_LIBS)
+test_connection_LDADD = ../network/libmoshnetwork.a ../protobufs/libmoshprotos.a ../crypto/libmoshcrypto.a ../util/libmoshutil.a $(CRYPTO_LIBS) $(protobuf_LIBS)
 
 clean-local: clean-local-check
 .PHONY: clean-local-check
