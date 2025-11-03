@@ -5,6 +5,9 @@
 /nonce-incr
 /inpty
 /is-utf8-locale
+/test-connection
+/test-tcp-basic
+/test-tcp-clientserver
 /*.d/
 *.log
 *.trs
