@@ -3,6 +3,7 @@
 *.pb.cc
 *.pb.h
 *~
+*.log
 .deps
 Makefile
 Makefile.in

@@ -38,7 +38,7 @@ displaytests = \
 	unicode-later-combining.test \
 	window-resize.test
 
-check_PROGRAMS = ocb-aes encrypt-decrypt base64 nonce-incr inpty is-utf8-locale test-connection
+check_PROGRAMS = ocb-aes encrypt-decrypt base64 nonce-incr inpty is-utf8-locale test-connection test-tcp-basic test-tcp-clientserver
 TESTS = ocb-aes encrypt-decrypt base64 nonce-incr local.test $(displaytests)
 XFAIL_TESTS = \
 	e2e-failure.test \
@@ -75,6 +75,14 @@ is_utf8_locale_LDADD = ../util/libmoshutil.a $(LIBUTIL)
 test_connection_SOURCES = test-connection.cc
 test_connection_CPPFLAGS = -I$(srcdir)/../network -I$(srcdir)/../crypto -I$(srcdir)/../util -I$(top_srcdir)/ $(CRYPTO_CFLAGS) $(protobuf_CFLAGS)
 test_connection_LDADD = ../network/libmoshnetwork.a ../protobufs/libmoshprotos.a ../crypto/libmoshcrypto.a ../util/libmoshutil.a $(CRYPTO_LIBS) $(protobuf_LIBS)
+
+test_tcp_basic_SOURCES = test-tcp-basic.cc
+test_tcp_basic_CPPFLAGS = -I$(srcdir)/../network -I$(srcdir)/../crypto -I$(srcdir)/../util -I$(top_srcdir)/ $(CRYPTO_CFLAGS) $(protobuf_CFLAGS)
+test_tcp_basic_LDADD = ../network/libmoshnetwork.a ../protobufs/libmoshprotos.a ../crypto/libmoshcrypto.a ../util/libmoshutil.a $(CRYPTO_LIBS) $(protobuf_LIBS)
+
+test_tcp_clientserver_SOURCES = test-tcp-clientserver.cc
+test_tcp_clientserver_CPPFLAGS = -I$(srcdir)/../network -I$(srcdir)/../crypto -I$(srcdir)/../util -I$(top_srcdir)/ $(CRYPTO_CFLAGS) $(protobuf_CFLAGS)
+test_tcp_clientserver_LDADD = ../network/libmoshnetwork.a ../protobufs/libmoshprotos.a ../crypto/libmoshcrypto.a ../util/libmoshutil.a $(CRYPTO_LIBS) $(protobuf_LIBS)
 
 clean-local: clean-local-check
 .PHONY: clean-local-check
