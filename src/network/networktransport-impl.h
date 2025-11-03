@@ -40,6 +40,18 @@
 
 using namespace Network;
 
+/* Helper constructor - takes pre-created connection (for factory methods) */
+template<class MyState, class RemoteState>
+Transport<MyState, RemoteState>::Transport( ConnectionInterface* conn,
+                                            MyState& initial_state,
+                                            RemoteState& initial_remote )
+  : connection( conn ), sender( connection, initial_state ),
+    received_states( 1, TimestampedState<RemoteState>( timestamp(), 0, initial_remote ) ),
+    receiver_quench_timer( 0 ), last_receiver_state( initial_remote ), fragments(), verbose( 0 )
+{
+  /* helper constructor - connection already created */
+}
+
 template<class MyState, class RemoteState>
 Transport<MyState, RemoteState>::Transport( MyState& initial_state,
                                             RemoteState& initial_remote,
@@ -81,18 +93,21 @@ Transport<MyState, RemoteState>* Transport<MyState, RemoteState>::create_with_pr
   const char* desired_port,
   uint64_t tcp_timeout_ms )
 {
-  Transport* transport = new Transport( initial_state, initial_remote, desired_ip, desired_port );
+  /* Create the correct connection type FIRST, before constructing Transport */
+  ConnectionInterface* conn = nullptr;
 
-  /* If TCP, replace the UDP connection with TCP */
   if ( protocol == TransportProtocol::TCP ) {
-    delete transport->connection;
-    transport->connection = new TCPConnection( desired_ip, desired_port );
+    TCPConnection* tcp_conn = new TCPConnection( desired_ip, desired_port );
     if ( tcp_timeout_ms != 500 ) {
-      static_cast<TCPConnection*>( transport->connection )->set_timeout( tcp_timeout_ms );
+      tcp_conn->set_timeout( tcp_timeout_ms );
     }
+    conn = tcp_conn;
+  } else {
+    conn = new UDPConnection( desired_ip, desired_port );
   }
 
-  return transport;
+  /* Now construct Transport with the correct connection (sender gets correct pointer) */
+  return new Transport( conn, initial_state, initial_remote );
 }
 
 /* Factory method for client */
@@ -106,18 +121,21 @@ Transport<MyState, RemoteState>* Transport<MyState, RemoteState>::create_with_pr
   const char* port,
   uint64_t tcp_timeout_ms )
 {
-  Transport* transport = new Transport( initial_state, initial_remote, key_str, ip, port );
+  /* Create the correct connection type FIRST, before constructing Transport */
+  ConnectionInterface* conn = nullptr;
 
-  /* If TCP, replace the UDP connection with TCP */
   if ( protocol == TransportProtocol::TCP ) {
-    delete transport->connection;
-    transport->connection = new TCPConnection( key_str, ip, port );
+    TCPConnection* tcp_conn = new TCPConnection( key_str, ip, port );
     if ( tcp_timeout_ms != 500 ) {
-      static_cast<TCPConnection*>( transport->connection )->set_timeout( tcp_timeout_ms );
+      tcp_conn->set_timeout( tcp_timeout_ms );
     }
+    conn = tcp_conn;
+  } else {
+    conn = new UDPConnection( key_str, ip, port );
   }
 
-  return transport;
+  /* Now construct Transport with the correct connection (sender gets correct pointer) */
+  return new Transport( conn, initial_state, initial_remote );
 }
 
 template<class MyState, class RemoteState>

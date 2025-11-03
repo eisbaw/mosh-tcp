@@ -90,6 +90,11 @@ private:
   FragmentAssembly fragments;
   unsigned int verbose;
 
+  /* Helper constructors that take pre-created connection (for factory methods) */
+  Transport( ConnectionInterface* conn,
+             MyState& initial_state,
+             RemoteState& initial_remote );
+
 public:
   /* Constructors (legacy - create UDP connections) */
   Transport( MyState& initial_state,
