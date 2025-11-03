@@ -182,6 +182,31 @@ int main( int argc, char* argv[] )
   char* predict_overwrite = getenv( "MOSH_PREDICTION_OVERWRITE" );
   /* can be NULL */
 
+  /* Read protocol preference */
+  char* protocol_env = getenv( "MOSH_PROTOCOL" );
+  Network::TransportProtocol protocol = Network::TransportProtocol::UDP; /* default */
+  if ( protocol_env ) {
+    try {
+      protocol = Network::string_to_protocol( protocol_env );
+    } catch ( const Network::NetworkException& e ) {
+      fprintf( stderr, "%s\n", e.what() );
+      exit( 1 );
+    }
+  }
+
+  /* Read TCP timeout preference */
+  char* tcp_timeout_env = getenv( "MOSH_TCP_TIMEOUT" );
+  uint64_t tcp_timeout_ms = 500; /* default */
+  if ( tcp_timeout_env ) {
+    char* endptr;
+    long timeout = strtol( tcp_timeout_env, &endptr, 10 );
+    if ( *endptr != '\0' || timeout < 100 || timeout > 1000 ) {
+      fprintf( stderr, "MOSH_TCP_TIMEOUT must be between 100 and 1000 ms\n" );
+      exit( 1 );
+    }
+    tcp_timeout_ms = static_cast<uint64_t>( timeout );
+  }
+
   std::string key( env_key );
 
   if ( unsetenv( "MOSH_KEY" ) < 0 ) {
@@ -194,7 +219,8 @@ int main( int argc, char* argv[] )
 
   bool success = false;
   try {
-    STMClient client( ip, desired_port, key.c_str(), predict_mode, verbose, predict_overwrite );
+    STMClient client( ip, desired_port, key.c_str(), predict_mode, verbose, predict_overwrite, protocol,
+                      tcp_timeout_ms );
     client.init();
 
     try {

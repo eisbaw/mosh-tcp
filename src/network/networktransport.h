@@ -38,12 +38,38 @@
 #include <list>
 #include <string>
 #include <vector>
+#include <strings.h>
 
 #include "src/network/network.h"
 #include "src/network/transportsender.h"
 #include "transportfragment.h"
 
 namespace Network {
+
+/* Protocol selection */
+enum class TransportProtocol { UDP, TCP };
+
+/* Convert protocol to string */
+inline const char* protocol_to_string( TransportProtocol proto )
+{
+  return ( proto == TransportProtocol::TCP ) ? "tcp" : "udp";
+}
+
+/* Parse protocol from string */
+inline TransportProtocol string_to_protocol( const char* str )
+{
+  if ( str == nullptr ) {
+    return TransportProtocol::UDP; /* default */
+  }
+  if ( strcasecmp( str, "tcp" ) == 0 ) {
+    return TransportProtocol::TCP;
+  }
+  if ( strcasecmp( str, "udp" ) == 0 ) {
+    return TransportProtocol::UDP;
+  }
+  throw NetworkException( std::string( "Invalid protocol: " ) + str, 0 );
+}
+
 template<class MyState, class RemoteState>
 class Transport
 {
@@ -65,6 +91,7 @@ private:
   unsigned int verbose;
 
 public:
+  /* Constructors (legacy - create UDP connections) */
   Transport( MyState& initial_state,
              RemoteState& initial_remote,
              const char* desired_ip,
@@ -75,6 +102,21 @@ public:
              const char* ip,
              const char* port );
   ~Transport();
+
+  /* Factory methods for protocol selection */
+  static Transport* create_with_protocol( TransportProtocol protocol,
+                                          MyState& initial_state,
+                                          RemoteState& initial_remote,
+                                          const char* desired_ip,
+                                          const char* desired_port,
+                                          uint64_t tcp_timeout_ms = 500 );
+  static Transport* create_with_protocol( TransportProtocol protocol,
+                                          MyState& initial_state,
+                                          RemoteState& initial_remote,
+                                          const char* key_str,
+                                          const char* ip,
+                                          const char* port,
+                                          uint64_t tcp_timeout_ms = 500 );
 
   /* Send data or an ack if necessary. */
   void tick( void ) { sender.tick(); }

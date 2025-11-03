@@ -34,6 +34,7 @@
 #define NETWORK_TRANSPORT_IMPL_HPP
 
 #include "src/network/networktransport.h"
+#include "src/network/tcpconnection.h"
 
 #include "transportsender-impl.h"
 
@@ -68,6 +69,55 @@ template<class MyState, class RemoteState>
 Transport<MyState, RemoteState>::~Transport()
 {
   delete connection;
+}
+
+/* Factory method for server */
+template<class MyState, class RemoteState>
+Transport<MyState, RemoteState>* Transport<MyState, RemoteState>::create_with_protocol(
+  TransportProtocol protocol,
+  MyState& initial_state,
+  RemoteState& initial_remote,
+  const char* desired_ip,
+  const char* desired_port,
+  uint64_t tcp_timeout_ms )
+{
+  Transport* transport = new Transport( initial_state, initial_remote, desired_ip, desired_port );
+
+  /* If TCP, replace the UDP connection with TCP */
+  if ( protocol == TransportProtocol::TCP ) {
+    delete transport->connection;
+    transport->connection = new TCPConnection( desired_ip, desired_port );
+    if ( tcp_timeout_ms != 500 ) {
+      static_cast<TCPConnection*>( transport->connection )->set_timeout( tcp_timeout_ms );
+    }
+  }
+
+  return transport;
+}
+
+/* Factory method for client */
+template<class MyState, class RemoteState>
+Transport<MyState, RemoteState>* Transport<MyState, RemoteState>::create_with_protocol(
+  TransportProtocol protocol,
+  MyState& initial_state,
+  RemoteState& initial_remote,
+  const char* key_str,
+  const char* ip,
+  const char* port,
+  uint64_t tcp_timeout_ms )
+{
+  Transport* transport = new Transport( initial_state, initial_remote, key_str, ip, port );
+
+  /* If TCP, replace the UDP connection with TCP */
+  if ( protocol == TransportProtocol::TCP ) {
+    delete transport->connection;
+    transport->connection = new TCPConnection( key_str, ip, port );
+    if ( tcp_timeout_ms != 500 ) {
+      static_cast<TCPConnection*>( transport->connection )->set_timeout( tcp_timeout_ms );
+    }
+  }
+
+  return transport;
 }
 
 template<class MyState, class RemoteState>
