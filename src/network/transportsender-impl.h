@@ -47,7 +47,7 @@
 using namespace Network;
 
 template<class MyState>
-TransportSender<MyState>::TransportSender( Connection* s_connection, MyState& initial_state )
+TransportSender<MyState>::TransportSender( ConnectionInterface* s_connection, MyState& initial_state )
   : connection( s_connection ), current_state( initial_state ),
     sent_states( 1, TimestampedState<MyState>( timestamp(), 0, initial_state ) ),
     assumed_receiver_state( sent_states.begin() ), fragmenter(), next_ack_time( timestamp() ),
@@ -320,7 +320,7 @@ void TransportSender<MyState>::send_in_fragments( const std::string& diff, uint6
   }
 
   std::vector<Fragment> fragments = fragmenter.make_fragments(
-    inst, connection->get_MTU() - Network::Connection::ADDED_BYTES - Crypto::Session::ADDED_BYTES );
+    inst, connection->get_MTU() - Network::UDPConnection::ADDED_BYTES - Crypto::Session::ADDED_BYTES );
   for ( std::vector<Fragment>::iterator i = fragments.begin(); i != fragments.end(); i++ ) {
     connection->send( i->tostring() );
 
