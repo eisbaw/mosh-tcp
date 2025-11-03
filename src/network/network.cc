@@ -95,7 +95,7 @@ Message Packet::toMessage( void )
   return Message( Nonce( direction_seq ), timestamps + payload );
 }
 
-Packet Connection::new_packet( const std::string& s_payload )
+Packet UDPConnection::new_packet( const std::string& s_payload )
 {
   uint16_t outgoing_timestamp_reply = -1;
 
@@ -113,7 +113,7 @@ Packet Connection::new_packet( const std::string& s_payload )
   return p;
 }
 
-void Connection::hop_port( void )
+void UDPConnection::hop_port( void )
 {
   assert( !server );
 
@@ -124,7 +124,7 @@ void Connection::hop_port( void )
   prune_sockets();
 }
 
-void Connection::prune_sockets( void )
+void UDPConnection::prune_sockets( void )
 {
   /* don't keep old sockets if the new socket has been working for long enough */
   if ( socks.size() > 1 ) {
@@ -147,7 +147,7 @@ void Connection::prune_sockets( void )
   }
 }
 
-Connection::Socket::Socket( int family ) : _fd( socket( family, SOCK_DGRAM, 0 ) )
+UDPConnection::Socket::Socket( int family ) : _fd( socket( family, SOCK_DGRAM, 0 ) )
 {
   if ( _fd < 0 ) {
     throw NetworkException( "socket", errno );
@@ -177,12 +177,12 @@ Connection::Socket::Socket( int family ) : _fd( socket( family, SOCK_DGRAM, 0 ) 
 #endif
 }
 
-void Connection::setup( void )
+void UDPConnection::setup( void )
 {
   last_port_choice = timestamp();
 }
 
-const std::vector<int> Connection::fds( void ) const
+const std::vector<int> UDPConnection::fds( void ) const
 {
   std::vector<int> ret;
 
@@ -193,7 +193,7 @@ const std::vector<int> Connection::fds( void ) const
   return ret;
 }
 
-void Connection::set_MTU( int family )
+void UDPConnection::set_MTU( int family )
 {
   switch ( family ) {
     case AF_INET:
@@ -227,7 +227,7 @@ private:
   AddrInfo& operator=( const AddrInfo& );
 };
 
-Connection::Connection( const char* desired_ip, const char* desired_port ) /* server */
+UDPConnection::UDPConnection( const char* desired_ip, const char* desired_port ) /* server */
   : socks(), has_remote_addr( false ), remote_addr(), remote_addr_len( 0 ), server( true ), MTU( DEFAULT_SEND_MTU ),
     key(), session( key ), direction( TO_CLIENT ), saved_timestamp( -1 ), saved_timestamp_received_at( 0 ),
     expected_receiver_seq( 0 ), last_heard( -1 ), last_port_choice( -1 ), last_roundtrip_success( -1 ),
@@ -273,7 +273,7 @@ Connection::Connection( const char* desired_ip, const char* desired_port ) /* se
   throw NetworkException( "Could not bind", errno );
 }
 
-bool Connection::try_bind( const char* addr, int port_low, int port_high )
+bool UDPConnection::try_bind( const char* addr, int port_low, int port_high )
 {
   struct addrinfo hints;
   memset( &hints, 0, sizeof( hints ) );
@@ -338,7 +338,7 @@ bool Connection::try_bind( const char* addr, int port_low, int port_high )
   throw NetworkException( "bind", saved_errno );
 }
 
-Connection::Connection( const char* key_str, const char* ip, const char* port ) /* client */
+UDPConnection::UDPConnection( const char* key_str, const char* ip, const char* port ) /* client */
   : socks(), has_remote_addr( false ), remote_addr(), remote_addr_len( 0 ), server( false ),
     MTU( DEFAULT_SEND_MTU ), key( key_str ), session( key ), direction( TO_SERVER ), saved_timestamp( -1 ),
     saved_timestamp_received_at( 0 ), expected_receiver_seq( 0 ), last_heard( -1 ), last_port_choice( -1 ),
@@ -364,7 +364,7 @@ Connection::Connection( const char* key_str, const char* ip, const char* port ) 
   set_MTU( remote_addr.sa.sa_family );
 }
 
-void Connection::send( const std::string& s )
+void UDPConnection::send( const std::string& s )
 {
   if ( !has_remote_addr ) {
     return;
@@ -399,7 +399,7 @@ void Connection::send( const std::string& s )
   }
 }
 
-std::string Connection::recv( void )
+std::string UDPConnection::recv( void )
 {
   assert( !socks.empty() );
   for ( std::deque<Socket>::const_iterator it = socks.begin(); it != socks.end(); it++ ) {
@@ -421,7 +421,7 @@ std::string Connection::recv( void )
   throw NetworkException( "No packet received" );
 }
 
-std::string Connection::recv_one( int sock_to_recv )
+std::string UDPConnection::recv_one( int sock_to_recv )
 {
   /* receive source address, ECN, and payload in msghdr structure */
   Addr packet_remote_addr;
@@ -544,7 +544,7 @@ std::string Connection::recv_one( int sock_to_recv )
   return p.payload;
 }
 
-std::string Connection::port( void ) const
+std::string UDPConnection::port( void ) const
 {
   Addr local_addr;
   socklen_t addrlen = sizeof( local_addr );
@@ -589,7 +589,7 @@ uint16_t Network::timestamp_diff( uint16_t tsnew, uint16_t tsold )
   return diff;
 }
 
-uint64_t Connection::timeout( void ) const
+uint64_t UDPConnection::timeout( void ) const
 {
   uint64_t RTO = lrint( ceil( SRTT + 4 * RTTVAR ) );
   if ( RTO < MIN_RTO ) {
@@ -600,19 +600,19 @@ uint64_t Connection::timeout( void ) const
   return RTO;
 }
 
-Connection::Socket::~Socket()
+UDPConnection::Socket::~Socket()
 {
   fatal_assert( close( _fd ) == 0 );
 }
 
-Connection::Socket::Socket( const Socket& other ) : _fd( dup( other._fd ) )
+UDPConnection::Socket::Socket( const Socket& other ) : _fd( dup( other._fd ) )
 {
   if ( _fd < 0 ) {
     throw NetworkException( "socket", errno );
   }
 }
 
-Connection::Socket& Connection::Socket::operator=( const Socket& other )
+UDPConnection::Socket& UDPConnection::Socket::operator=( const Socket& other )
 {
   if ( dup2( other._fd, _fd ) < 0 ) {
     throw NetworkException( "socket", errno );
@@ -621,7 +621,7 @@ Connection::Socket& Connection::Socket::operator=( const Socket& other )
   return *this;
 }
 
-bool Connection::parse_portrange( const char* desired_port, int& desired_port_low, int& desired_port_high )
+bool UDPConnection::parse_portrange( const char* desired_port, int& desired_port_low, int& desired_port_high )
 {
   /* parse "port" or "portlow:porthigh" */
   desired_port_low = desired_port_high = 0;

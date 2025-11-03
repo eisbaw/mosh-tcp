@@ -45,6 +45,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 
+#include "connection_interface.h"
 #include "src/crypto/crypto.h"
 
 using namespace Crypto;
@@ -104,7 +105,13 @@ union Addr {
   struct sockaddr_storage ss;
 };
 
-class Connection
+/*
+ * UDP-based connection implementation.
+ *
+ * This class implements the ConnectionInterface using UDP datagrams.
+ * Features UDP-specific optimizations like port hopping for NAT traversal.
+ */
+class UDPConnection : public ConnectionInterface
 {
 private:
   /*
@@ -216,27 +223,28 @@ public:
   /* Network transport overhead. */
   static const int ADDED_BYTES = 8 /* seqno/nonce */ + 4 /* timestamps */;
 
-  Connection( const char* desired_ip, const char* desired_port );      /* server */
-  Connection( const char* key_str, const char* ip, const char* port ); /* client */
+  UDPConnection( const char* desired_ip, const char* desired_port );      /* server */
+  UDPConnection( const char* key_str, const char* ip, const char* port ); /* client */
 
-  void send( const std::string& s );
-  std::string recv( void );
-  const std::vector<int> fds( void ) const;
-  int get_MTU( void ) const { return MTU; }
+  /* ConnectionInterface implementation */
+  void send( const std::string& s ) override;
+  std::string recv( void ) override;
+  const std::vector<int> fds( void ) const override;
+  int get_MTU( void ) const override { return MTU; }
 
-  std::string port( void ) const;
-  std::string get_key( void ) const { return key.printable_key(); }
-  bool get_has_remote_addr( void ) const { return has_remote_addr; }
+  std::string port( void ) const override;
+  std::string get_key( void ) const override { return key.printable_key(); }
+  bool get_has_remote_addr( void ) const override { return has_remote_addr; }
 
-  uint64_t timeout( void ) const;
-  double get_SRTT( void ) const { return SRTT; }
+  uint64_t timeout( void ) const override;
+  double get_SRTT( void ) const override { return SRTT; }
 
-  const Addr& get_remote_addr( void ) const { return remote_addr; }
-  socklen_t get_remote_addr_len( void ) const { return remote_addr_len; }
+  const Addr& get_remote_addr( void ) const override { return remote_addr; }
+  socklen_t get_remote_addr_len( void ) const override { return remote_addr_len; }
 
-  std::string& get_send_error( void ) { return send_error; }
+  std::string& get_send_error( void ) override { return send_error; }
 
-  void set_last_roundtrip_success( uint64_t s_success ) { last_roundtrip_success = s_success; }
+  void set_last_roundtrip_success( uint64_t s_success ) override { last_roundtrip_success = s_success; }
 
   static bool parse_portrange( const char* desired_port_range, int& desired_port_low, int& desired_port_high );
 };

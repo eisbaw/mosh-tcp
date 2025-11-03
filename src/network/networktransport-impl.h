@@ -44,7 +44,7 @@ Transport<MyState, RemoteState>::Transport( MyState& initial_state,
                                             RemoteState& initial_remote,
                                             const char* desired_ip,
                                             const char* desired_port )
-  : connection( desired_ip, desired_port ), sender( &connection, initial_state ),
+  : connection( new UDPConnection( desired_ip, desired_port ) ), sender( connection, initial_state ),
     received_states( 1, TimestampedState<RemoteState>( timestamp(), 0, initial_remote ) ),
     receiver_quench_timer( 0 ), last_receiver_state( initial_remote ), fragments(), verbose( 0 )
 {
@@ -57,7 +57,7 @@ Transport<MyState, RemoteState>::Transport( MyState& initial_state,
                                             const char* key_str,
                                             const char* ip,
                                             const char* port )
-  : connection( key_str, ip, port ), sender( &connection, initial_state ),
+  : connection( new UDPConnection( key_str, ip, port ) ), sender( connection, initial_state ),
     received_states( 1, TimestampedState<RemoteState>( timestamp(), 0, initial_remote ) ),
     receiver_quench_timer( 0 ), last_receiver_state( initial_remote ), fragments(), verbose( 0 )
 {
@@ -65,9 +65,15 @@ Transport<MyState, RemoteState>::Transport( MyState& initial_state,
 }
 
 template<class MyState, class RemoteState>
+Transport<MyState, RemoteState>::~Transport()
+{
+  delete connection;
+}
+
+template<class MyState, class RemoteState>
 void Transport<MyState, RemoteState>::recv( void )
 {
-  std::string s( connection.recv() );
+  std::string s( connection->recv() );
   Fragment frag( s );
 
   if ( fragments.add_fragment( frag ) ) { /* complete packet */
@@ -80,7 +86,7 @@ void Transport<MyState, RemoteState>::recv( void )
     sender.process_acknowledgment_through( inst.ack_num() );
 
     /* inform network layer of roundtrip (end-to-end-to-end) connectivity */
-    connection.set_last_roundtrip_success( sender.get_sent_state_acked_timestamp() );
+    connection->set_last_roundtrip_success( sender.get_sent_state_acked_timestamp() );
 
     /* first, make sure we don't already have the new state */
     for ( typename std::list<TimestampedState<RemoteState>>::iterator i = received_states.begin();

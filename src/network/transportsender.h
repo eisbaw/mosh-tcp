@@ -37,6 +37,7 @@
 #include <string>
 
 #include "src/crypto/prng.h"
+#include "src/network/connection_interface.h"
 #include "src/network/network.h"
 #include "src/protobufs/transportinstruction.pb.h"
 #include "transportfragment.h"
@@ -67,7 +68,7 @@ private:
   void add_sent_state( uint64_t the_timestamp, uint64_t num, MyState& state );
 
   /* state of sender */
-  Connection* connection;
+  ConnectionInterface* connection;
 
   MyState current_state;
 
@@ -109,7 +110,7 @@ private:
 
 public:
   /* constructor */
-  TransportSender( Connection* s_connection, MyState& initial_state );
+  TransportSender( ConnectionInterface* s_connection, MyState& initial_state );
 
   /* Send data or an ack if necessary */
   void tick( void );
