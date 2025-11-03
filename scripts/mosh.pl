@@ -83,6 +83,9 @@ my $localhost = undef;
 
 my $ssh_pty = 1;
 
+my $protocol = 'udp';       # default to UDP
+my $tcp_timeout = undef;    # default TCP timeout (500ms)
+
 my $help = undef;
 my $version = undef;
 
@@ -171,6 +174,8 @@ GetOptions( 'client=s' => \$client,
 	    'version' => \$version,
 	    'fake-proxy!' => \my $fake_proxy,
 	    'bind-server=s' => \$bind_ip,
+	    'protocol=s' => \$protocol,
+	    'tcp-timeout=i' => \$tcp_timeout,
 	    'experimental-remote-ip=s' => \$use_remote_ip) or die $usage;
 
 if ( defined $help ) {
@@ -384,6 +389,18 @@ if ( $pid == 0 ) { # child
     push @server, ( '-p', $port_request );
   }
 
+  if ( defined $protocol ) {
+    # Validate protocol
+    if ( $protocol ne 'tcp' && $protocol ne 'udp' ) {
+      die "$0: Invalid protocol '$protocol'. Must be 'tcp' or 'udp'.\n";
+    }
+    push @server, ( '-P', $protocol );
+  }
+
+  if ( defined $tcp_timeout ) {
+    push @server, ( '-T', $tcp_timeout );
+  }
+
   for ( &locale_vars ) {
     push @server, ( '-l', $_ );
   }
@@ -427,7 +444,13 @@ if ( $pid == 0 ) { # child
 	die "Bad MOSH SSH_CONNECTION string: $_\n";
       }
     } elsif ( m{^MOSH CONNECT } ) {
-      if ( ( $port, $key ) = m{^MOSH CONNECT (\d+?) ([A-Za-z0-9/+]{22})\s*$} ) {
+      # Try new format with protocol first: "MOSH CONNECT <protocol> <port> <key>"
+      if ( ( my $server_protocol, $port, $key ) = m{^MOSH CONNECT (\w+) (\d+?) ([A-Za-z0-9/+]{22})\s*$} ) {
+	$protocol = $server_protocol;
+	last LINE;
+      # Fall back to old format without protocol: "MOSH CONNECT <port> <key>"
+      } elsif ( ( $port, $key ) = m{^MOSH CONNECT (\d+?) ([A-Za-z0-9/+]{22})\s*$} ) {
+	$protocol = 'udp';  # Old format means UDP
 	last LINE;
       } else {
 	die "Bad MOSH CONNECT string: $_\n";
@@ -462,6 +485,8 @@ if ( $pid == 0 ) { # child
   $ENV{ 'MOSH_KEY' } = $key;
   $ENV{ 'MOSH_PREDICTION_DISPLAY' } = $predict;
   $ENV{ 'MOSH_NO_TERM_INIT' } = '1' if !$term_init;
+  $ENV{ 'MOSH_PROTOCOL' } = $protocol if defined $protocol;
+  $ENV{ 'MOSH_TCP_TIMEOUT' } = $tcp_timeout if defined $tcp_timeout;
   exec {$client} ("$client", "-# @cmdline |", $ip, $port);
 }
 

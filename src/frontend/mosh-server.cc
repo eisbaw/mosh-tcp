@@ -110,7 +110,9 @@ static int run_server( const char* desired_ip,
                        char* command_argv[],
                        const int colors,
                        unsigned int verbose,
-                       bool with_motd );
+                       bool with_motd,
+                       Network::TransportProtocol protocol,
+                       uint64_t tcp_timeout_ms );
 
 static void print_version( FILE* file )
 {
@@ -124,9 +126,13 @@ static void print_version( FILE* file )
 
 static void print_usage( FILE* stream, const char* argv0 )
 {
-  fprintf( stream,
-           "Usage: %s new [-s] [-v] [-i LOCALADDR] [-p PORT[:PORT2]] [-c COLORS] [-l NAME=VALUE] [-- COMMAND...]\n",
-           argv0 );
+  fprintf(
+    stream,
+    "Usage: %s new [-s] [-v] [-i LOCALADDR] [-p PORT[:PORT2]] [-c COLORS] [-P PROTOCOL] [-T TIMEOUT] [-l "
+    "NAME=VALUE] [-- COMMAND...]\n"
+    "  -P, --protocol PROTOCOL   Transport protocol (tcp or udp, default: udp)\n"
+    "  -T, --tcp-timeout TIMEOUT TCP timeout in milliseconds (100-1000, default: 500)\n",
+    argv0 );
 }
 
 static bool print_motd( const char* filename );
@@ -192,6 +198,8 @@ int main( int argc, char* argv[] )
   unsigned int verbose = 0; /* don't close stdin/stdout/stderr */
   /* Will cause mosh-server not to correctly detach on old versions of sshd. */
   std::list<std::string> locale_vars;
+  Network::TransportProtocol protocol = Network::TransportProtocol::UDP; /* default to UDP */
+  uint64_t tcp_timeout_ms = 500;                                         /* default TCP timeout */
 
   /* strip off command */
   for ( int i = 1; i < argc; i++ ) {
@@ -216,7 +224,7 @@ int main( int argc, char* argv[] )
   if ( ( argc >= 2 ) && ( strcmp( argv[1], "new" ) == 0 ) ) {
     /* new option syntax */
     int opt;
-    while ( ( opt = getopt( argc - 1, argv + 1, "@:i:p:c:svl:" ) ) != -1 ) {
+    while ( ( opt = getopt( argc - 1, argv + 1, "@:i:p:c:svl:P:T:" ) ) != -1 ) {
       switch ( opt ) {
           /*
            * This undocumented option does nothing but eat its argument.
@@ -256,6 +264,29 @@ int main( int argc, char* argv[] )
           break;
         case 'l':
           locale_vars.push_back( std::string( optarg ) );
+          break;
+        case 'P':
+          try {
+            protocol = Network::string_to_protocol( optarg );
+          } catch ( const Network::NetworkException& e ) {
+            fprintf( stderr, "%s: %s\n", argv[0], e.what() );
+            print_usage( stderr, argv[0] );
+            exit( 1 );
+          }
+          break;
+        case 'T':
+          try {
+            tcp_timeout_ms = myatoi( optarg );
+            if ( tcp_timeout_ms < 100 || tcp_timeout_ms > 1000 ) {
+              fprintf( stderr, "%s: TCP timeout must be between 100 and 1000 ms\n", argv[0] );
+              print_usage( stderr, argv[0] );
+              exit( 1 );
+            }
+          } catch ( const CryptoException& ) {
+            fprintf( stderr, "%s: Bad TCP timeout value (%s)\n", argv[0], optarg );
+            print_usage( stderr, argv[0] );
+            exit( 1 );
+          }
           break;
         default:
           /* don't die on unknown options */
@@ -372,7 +403,8 @@ int main( int argc, char* argv[] )
   }
 
   try {
-    return run_server( desired_ip, desired_port, command_path, command_argv, colors, verbose, with_motd );
+    return run_server( desired_ip, desired_port, command_path, command_argv, colors, verbose, with_motd, protocol,
+                       tcp_timeout_ms );
   } catch ( const Network::NetworkException& e ) {
     fprintf( stderr, "Network exception: %s\n", e.what() );
     return 1;
@@ -388,7 +420,9 @@ static int run_server( const char* desired_ip,
                        char* command_argv[],
                        const int colors,
                        unsigned int verbose,
-                       bool with_motd )
+                       bool with_motd,
+                       Network::TransportProtocol protocol,
+                       uint64_t tcp_timeout_ms )
 {
   /* get network idle timeout */
   long network_timeout = 0;
@@ -434,7 +468,8 @@ static int run_server( const char* desired_ip,
   /* open network */
   Network::UserStream blank;
   using NetworkPointer = std::shared_ptr<ServerConnection>;
-  NetworkPointer network( new ServerConnection( terminal, blank, desired_ip, desired_port ) );
+  NetworkPointer network( ServerConnection::create_with_protocol( protocol, terminal, blank, desired_ip,
+                                                                   desired_port, tcp_timeout_ms ) );
 
   network->set_verbose( verbose );
   Select::set_verbose( verbose );
@@ -447,7 +482,8 @@ static int run_server( const char* desired_ip,
   if ( isatty( STDIN_FILENO ) ) {
     puts( "\r\n" );
   }
-  printf( "MOSH CONNECT %s %s\n", network->port().c_str(), network->get_key().c_str() );
+  printf( "MOSH CONNECT %s %s %s\n", Network::protocol_to_string( protocol ), network->port().c_str(),
+          network->get_key().c_str() );
 
   /* don't let signals kill us */
   struct sigaction sa;

@@ -237,6 +237,7 @@ void TCPConnection::accept_connection( void )
   }
 
   /* Accept connection */
+  remote_addr_len = sizeof( remote_addr ); /* Initialize before accept() - required by accept(2) */
   fd = accept( listen_fd, &remote_addr.sa, &remote_addr_len );
   if ( fd < 0 ) {
     if ( errno == EAGAIN || errno == EWOULDBLOCK ) {
@@ -253,7 +254,16 @@ void TCPConnection::accept_connection( void )
   listen_fd = -1;
 
   /* Setup socket options */
-  setup();
+  try {
+    setup();
+  } catch ( ... ) {
+    /* Cleanup on setup failure */
+    close( fd );
+    fd = -1;
+    connected = false;
+    has_remote_addr = false;
+    throw;
+  }
 
   if ( verbose > 0 ) {
     char addr_str[INET6_ADDRSTRLEN];
@@ -634,6 +644,11 @@ void TCPConnection::send( const std::string& s )
 /* Receive one complete message */
 std::string TCPConnection::recv_one( void )
 {
+  /* Validate fd before use */
+  if ( fd < 0 ) {
+    throw NetworkException( "invalid file descriptor", EBADF );
+  }
+
   /* Read until we have a complete message */
   while ( true ) {
     /* Do we have a complete length prefix? */
@@ -681,6 +696,10 @@ std::string TCPConnection::recv_one( void )
     ssize_t n = read( fd, buf, sizeof( buf ) );
 
     if ( n > 0 ) {
+      /* Protect against unbounded buffer growth */
+      if ( recv_buffer.size() + n > MAX_MESSAGE_SIZE + sizeof( uint32_t ) ) {
+        throw NetworkException( "receive buffer overflow - incomplete message too large", E2BIG );
+      }
       recv_buffer.append( buf, n );
     } else if ( n == 0 ) {
       throw NetworkException( "read: connection closed", 0 );
