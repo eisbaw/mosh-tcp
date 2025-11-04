@@ -361,8 +361,18 @@ void TCPConnection::setup( void )
 
 void TCPConnection::setup_socket_options( void )
 {
-  /* Enable TCP_NODELAY (disable Nagle's algorithm) */
   int flag = 1;
+
+  /* Prevent SIGPIPE on macOS/BSD when writing to closed socket */
+#ifdef SO_NOSIGPIPE
+  if ( setsockopt( fd, SOL_SOCKET, SO_NOSIGPIPE, &flag, sizeof( flag ) ) < 0 ) {
+    if ( verbose > 0 ) {
+      fprintf( stderr, "[TCP] Warning: could not set SO_NOSIGPIPE: %s\n", strerror( errno ) );
+    }
+  }
+#endif
+
+  /* Enable TCP_NODELAY (disable Nagle's algorithm) */
   if ( setsockopt( fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof( flag ) ) < 0 ) {
     if ( verbose > 0 ) {
       fprintf( stderr, "[TCP] Warning: could not set TCP_NODELAY: %s\n", strerror( errno ) );
@@ -615,12 +625,14 @@ void TCPConnection::send( const std::string& s )
     /* Encrypt */
     std::string encrypted = session.encrypt( m );
 
-    /* Send with length prefix */
-    uint32_t len = encrypted.size();
-    if ( len > MAX_MESSAGE_SIZE ) {
+    /* Send with length prefix - check size before conversion to uint32_t */
+    size_t encrypted_size = encrypted.size();
+    if ( encrypted_size > MAX_MESSAGE_SIZE ) {
       throw NetworkException( "message too large", E2BIG );
     }
 
+    /* Safe to convert now that we've checked bounds */
+    uint32_t len = static_cast<uint32_t>( encrypted_size );
     uint32_t net_len = htonl( len );
     write_fully( &net_len, sizeof( net_len ) );
     write_fully( encrypted.data(), encrypted.size() );
