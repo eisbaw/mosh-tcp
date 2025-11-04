@@ -11,3 +11,7 @@
 /*.d/
 *.log
 *.trs
+/stress-test-rapid-reconnect
+/stress-test-large-messages
+/stress-test-concurrent
+/fuzz-test-tcp-parser
