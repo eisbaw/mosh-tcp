@@ -1,3 +1,18 @@
+2025-11-04
+----------
+
+* TCP Transport Support
+
+Mosh now supports TCP transport as an alternative to UDP. This is useful
+for environments where UDP is blocked by firewalls or VPNs.
+
+Usage:
+  $ mosh --protocol=tcp user@host
+  $ mosh --protocol=tcp --tcp-timeout=300 user@host
+
+TCP transport provides reliable, ordered delivery but does not support
+client IP address roaming like UDP does.
+
 2012-04-26
 ----------
 

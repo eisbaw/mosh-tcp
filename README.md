@@ -84,6 +84,24 @@ Usage
   select alternate locations. More options are documented in the mosh(1) manual
   page.
 
+### TCP Transport
+
+  By default, Mosh uses UDP for transport, which works well in most situations
+  and supports roaming between different client IP addresses.
+
+  For environments where UDP is blocked (such as some corporate firewalls or VPNs),
+  Mosh now supports TCP transport:
+
+    $ mosh --protocol=tcp [user@]host
+
+  TCP transport provides reliable, ordered delivery and may work better through
+  restrictive network configurations. Note that TCP mode does not support client
+  IP address roaming the way UDP does.
+
+  You can also customize the TCP timeout (100-1000ms, default 500ms):
+
+    $ mosh --protocol=tcp --tcp-timeout=300 [user@]host
+
   There are [more examples](https://mosh.org/#usage) and a
   [FAQ](https://mosh.org/#faq) on the Mosh web site.
 
@@ -95,18 +113,21 @@ How it works
   authentication to log in.
 
   From this point, `mosh` runs the `mosh-server` process (as the user)
-  on the server machine. The server process listens on a high UDP port
-  and sends its port number and an AES-128 secret key back to the
-  client over SSH. The SSH connection is then shut down and the
-  terminal session begins over UDP.
+  on the server machine. The server process listens on a high port
+  (using UDP or TCP as selected) and sends its port number, protocol,
+  and an AES-128 secret key back to the client over SSH. The SSH
+  connection is then shut down and the terminal session begins.
 
-  If the client changes IP addresses, the server will begin sending
-  to the client on the new IP address within a few seconds.
+  By default, Mosh uses UDP transport. If the client changes IP addresses
+  with UDP, the server will begin sending to the client on the new IP
+  address within a few seconds. With TCP transport, the connection will
+  need to be re-established if the client IP changes.
 
-  To function, Mosh requires UDP datagrams to be passed between client
-  and server. By default, `mosh` uses a port number between 60000 and
-  61000, but the user can select a particular port with the -p option.
-  Please note that the -p option has no effect on the port used by SSH.
+  By default, `mosh` uses a port number between 60000 and 61000, but
+  the user can select a particular port with the -p option. The transport
+  protocol (UDP or TCP) can be selected with the --protocol option.
+  Please note that these options have no effect on the port or protocol
+  used by SSH.
 
 Advice to distributors
 ----------------------
