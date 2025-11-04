@@ -83,8 +83,13 @@ Number of colors to advertise to applications through TERM (e.g. 8, 256)
 .TP
 .B \-P \fIPROTOCOL\fP
 Transport protocol to use: tcp or udp.  The default is udp.
-TCP transport may work better through firewalls and VPNs that block UDP,
-but does not support client IP address roaming the way UDP does.
+
+TCP transport works better through firewalls and VPNs that block UDP.
+When using TCP, if the client's IP address changes (e.g., switching from
+WiFi to cellular), there will be a 1-2 second pause as the connection
+re-establishes automatically, but the session state is fully preserved.
+This is different from UDP which switches instantly, but the end result
+is the same: your session survives network changes.
 
 .TP
 .B \-T \fIMSEC\fP

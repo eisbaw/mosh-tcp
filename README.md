@@ -95,8 +95,10 @@ Usage
     $ mosh --protocol=tcp [user@]host
 
   TCP transport provides reliable, ordered delivery and may work better through
-  restrictive network configurations. Note that TCP mode does not support client
-  IP address roaming the way UDP does.
+  restrictive network configurations. When using TCP, if your IP address changes
+  (e.g., switching networks), there will be a brief pause (1-2 seconds) as the
+  connection re-establishes automatically, but your session state is fully
+  preserved.
 
   You can also customize the TCP timeout (100-1000ms, default 500ms):
 
@@ -120,8 +122,10 @@ How it works
 
   By default, Mosh uses UDP transport. If the client changes IP addresses
   with UDP, the server will begin sending to the client on the new IP
-  address within a few seconds. With TCP transport, the connection will
-  need to be re-established if the client IP changes.
+  address within a few seconds (seamless roaming). With TCP transport, the
+  connection will automatically re-establish if the client IP changes, with
+  a brief 1-2 second pause. In both cases, the session state is preserved
+  on the server, so your work is never lost.
 
   By default, `mosh` uses a port number between 60000 and 61000, but
   the user can select a particular port with the -p option. The transport

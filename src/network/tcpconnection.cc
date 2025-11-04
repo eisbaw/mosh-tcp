@@ -32,6 +32,7 @@
 
 #include "tcpconnection.h"
 #include "network.h"
+#include "src/util/timestamp.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -51,6 +52,9 @@ TCPConnection::TCPConnection( const char* desired_ip, const char* desired_port )
     listen_fd( -1 ),
     server( true ),
     connected( false ),
+    reconnecting( false ),
+    reconnect_attempt( 0 ),
+    next_reconnect_time( 0 ),
     remote_addr(),
     remote_addr_len( 0 ),
     has_remote_addr( false ),
@@ -86,6 +90,9 @@ TCPConnection::TCPConnection( const char* key_str, const char* ip, const char* p
     listen_fd( -1 ),
     server( false ),
     connected( false ),
+    reconnecting( false ),
+    reconnect_attempt( 0 ),
+    next_reconnect_time( 0 ),
     remote_addr(),
     remote_addr_len( 0 ),
     has_remote_addr( false ),
@@ -440,7 +447,7 @@ void TCPConnection::set_socket_timeout( uint64_t timeout_ms )
   }
 }
 
-/* Reconnect after connection loss (client mode only) */
+/* Reconnect after connection loss (client mode only) - non-blocking version */
 void TCPConnection::reconnect( void )
 {
   if ( server ) {
@@ -448,35 +455,63 @@ void TCPConnection::reconnect( void )
     return;
   }
 
-  close_connection();
+  /* Initialize reconnection state on first call */
+  if ( !reconnecting ) {
+    close_connection();
+    reconnecting = true;
+    reconnect_attempt = 0;
+    next_reconnect_time = frozen_timestamp(); /* Try immediately first time */
 
-  if ( verbose > 0 ) {
-    fprintf( stderr, "[TCP] Connection lost, attempting to reconnect...\n" );
+    if ( verbose > 0 ) {
+      fprintf( stderr, "[TCP] Connection lost, attempting to reconnect...\n" );
+    }
   }
 
-  /* Retry forever with exponential backoff */
-  unsigned int attempt = 0;
-  while ( !connected ) {
-    try {
-      connect_with_timeout( remote_addr, CONNECT_TIMEOUT );
-      if ( verbose > 0 ) {
-        fprintf( stderr, "[TCP] Reconnected successfully\n" );
-      }
-      /* Clear receive buffer on reconnection */
-      recv_buffer.clear();
-      return;
-    } catch ( const NetworkException& e ) {
-      if ( verbose > 1 ) {
-        fprintf( stderr, "[TCP] Reconnect attempt %u failed: %s\n", attempt + 1, e.what() );
-      }
-      attempt++;
-      /* Wait before retrying with exponential backoff (max 5 seconds) */
-      int delay = RECONNECT_DELAY * ( 1 << ( attempt < 5 ? attempt : 5 ) );
-      if ( delay > 5000 ) {
-        delay = 5000;
-      }
-      usleep( delay * 1000 );
+  /* Check if it's time to attempt reconnection */
+  uint64_t now = frozen_timestamp();
+  if ( now < next_reconnect_time ) {
+    /* Too soon, return and let caller retry later */
+    return;
+  }
+
+  /* Make a single connection attempt */
+  try {
+    connect_with_timeout( remote_addr, CONNECT_TIMEOUT );
+
+    /* Success! */
+    if ( verbose > 0 ) {
+      fprintf( stderr, "[TCP] Reconnected successfully after %u attempt(s)\n", reconnect_attempt + 1 );
     }
+
+    /* Clear receive buffer on reconnection */
+    recv_buffer.clear();
+
+    /* Reset reconnection state */
+    reconnecting = false;
+    reconnect_attempt = 0;
+    next_reconnect_time = 0;
+
+    return;
+  } catch ( const NetworkException& e ) {
+    if ( verbose > 1 ) {
+      fprintf( stderr, "[TCP] Reconnect attempt %u failed: %s\n", reconnect_attempt + 1, e.what() );
+    }
+
+    /* Calculate next retry time with exponential backoff (max 5 seconds) */
+    reconnect_attempt++;
+    int delay = RECONNECT_DELAY * ( 1 << ( reconnect_attempt < 5 ? reconnect_attempt : 5 ) );
+    if ( delay > 5000 ) {
+      delay = 5000;
+    }
+
+    next_reconnect_time = now + delay;
+
+    if ( verbose > 1 ) {
+      fprintf( stderr, "[TCP] Will retry in %d ms\n", delay );
+    }
+
+    /* Return immediately - caller will retry later */
+    return;
   }
 }
 
@@ -606,14 +641,22 @@ void TCPConnection::update_rtt( uint16_t timestamp_reply )
 /* Send a message */
 void TCPConnection::send( const std::string& s )
 {
+  /* Client: if reconnecting, try to reconnect */
+  if ( !server && reconnecting ) {
+    reconnect();
+    /* If still not connected, fall through to error handling below */
+  }
+
   if ( !connected ) {
     if ( server ) {
       /* Server not connected yet - store error but don't throw */
       send_error = "Not connected";
       return;
     } else {
-      /* Client - try to reconnect */
+      /* Client not connected - initiate reconnection */
       reconnect();
+      send_error = "Connection lost, reconnecting...";
+      return;
     }
   }
 
@@ -753,6 +796,15 @@ std::string TCPConnection::recv( void )
     }
   }
 
+  /* Client: if reconnecting, try to reconnect */
+  if ( !server && reconnecting ) {
+    reconnect();
+    /* If still not connected, return empty string */
+    if ( !connected ) {
+      return std::string();
+    }
+  }
+
   if ( !connected ) {
     return std::string();
   }
@@ -764,7 +816,7 @@ std::string TCPConnection::recv( void )
       fprintf( stderr, "[TCP] recv error: %s\n", e.what() );
     }
     if ( !server ) {
-      /* Client - attempt reconnection */
+      /* Client - initiate reconnection (non-blocking) */
       reconnect();
     } else {
       /* Server - connection lost, can't reconnect */
