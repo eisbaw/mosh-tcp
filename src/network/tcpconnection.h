@@ -84,6 +84,11 @@ private:
   bool server;    /* Server or client mode */
   bool connected; /* Connection established */
 
+  /* Reconnection state (client mode only) */
+  bool reconnecting;          /* Currently attempting to reconnect */
+  unsigned int reconnect_attempt; /* Number of reconnection attempts */
+  uint64_t next_reconnect_time;   /* Timestamp for next reconnection attempt */
+
   /* Network addresses */
   Addr remote_addr;        /* Remote peer address */
   socklen_t remote_addr_len;

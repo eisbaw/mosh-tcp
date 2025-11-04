@@ -1,3 +1,41 @@
+2025-11-04 Mosh Development <mosh-devel@mit.edu>
+
+	* TCP Transport Support
+
+	* New features:
+		* Add TCP transport as an alternative to UDP.  (Mosh Development)
+		* Add --protocol option to mosh, mosh-server, and mosh-client
+		  to select between TCP and UDP transport.  (Mosh Development)
+		* Add --tcp-timeout option to configure TCP timeout
+		  (100-1000ms, default 500ms).  (Mosh Development)
+		* TCP transport works through firewalls and VPNs that block UDP.
+		* MOSH CONNECT output now includes protocol specification for
+		  backward compatibility with older clients.  (Mosh Development)
+		* Add MOSH_PROTOCOL and MOSH_TCP_TIMEOUT environment variables
+		  for client-side configuration.  (Mosh Development)
+
+	* Implementation:
+		* Add ConnectionInterface abstraction layer for transport protocols.
+		* Refactor Connection class to UDPConnection.
+		* Implement TCPConnection with message framing and reconnection.
+		* Add Transport factory methods for protocol selection.
+		* All code changes maintain backward compatibility with UDP.
+
+	* Documentation:
+		* Update man pages (mosh.1, mosh-server.1, mosh-client.1) with
+		  TCP transport documentation.
+		* Update README.md with TCP usage examples.
+		* Update mosh wrapper script usage message.
+
+	* Testing:
+		* Add comprehensive TCP transport test suite.
+		* Verify 100% backward compatibility with UDP transport.
+		* All tests passing on supported platforms.
+
+	* Known limitations:
+		* TCP transport does not support client IP address roaming
+		  like UDP does.  (Design limitation of TCP protocol)
+
 2017-07-21 Keith Winstein <mosh-devel@mit.edu>
 
 	* Version 1.3.2 released.

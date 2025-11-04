@@ -40,7 +40,7 @@ and authenticate with existing means (e.g., public-key authentication
 or a password). \fBmosh\fP executes the unprivileged \fBmosh-server\fP
 helper program on the server, then closes the SSH connection and
 starts the \fBmosh-client\fP, which establishes a long-lived datagram
-connection over UDP.
+connection over UDP or TCP.
 
 To improve responsiveness, \fBmosh\fP runs a predictive model of the
 server's behavior in the background, trying to guess the effect of
@@ -59,10 +59,10 @@ round-trip and do not cause lasting effect.
 
 \fBmosh\fP does not support X forwarding or the non-interactive uses
 of SSH, including port forwarding or sshfs. \fBmosh\fP works through
-typical client-side network address translators but requires UDP to
-pass between client and server. By default, \fBmosh\fP uses the ports
-between 60000 and 61000, but allows the user to request a particular
-UDP port instead.
+typical client-side network address translators. By default, \fBmosh\fP
+uses UDP transport with ports between 60000 and 61000, but also supports
+TCP transport which may work better through some firewalls and VPNs.
+The user may request a particular port and choose between UDP and TCP.
 
 Currently, \fBmosh\fP has limited support for IPv6, dual-stack
 networks, and servers with multiple addresses.  At session start, it
@@ -198,11 +198,11 @@ Synonym for \-\-family=inet6
 
 .TP
 .B \-p \fIPORT\fP[:\fIPORT2\fP], \-\-port=\fIPORT\fP[:\fIPORT2\fP]
-Use a particular server-side UDP port or port range,
+Use a particular server-side port or port range,
 for example, if this is the
 only port that is forwarded through a firewall to the
 server. With \fB\-p 0\fP, the server will let the operating system pick an
-available UDP port. Otherwise, \fBmosh\fP will choose a port between 60000 and
+available port. Otherwise, \fBmosh\fP will choose a port between 60000 and
 61000. Please note that this option does not affect the server-side
 port used by SSH.
 
@@ -222,6 +222,28 @@ the SSH connection appear to come from localhost.
 
 With \-\-bind\-server=\fIIP\fP, the server will attempt to bind to the
 specified IP address.
+
+.TP
+.B \-\-protocol={tcp|udp}
+Select the transport protocol for the Mosh session.  The default is
+\fBudp\fP.
+
+UDP is the traditional Mosh transport and works well in most situations.
+It supports roaming between different client IP addresses and provides
+good performance.
+
+TCP transport is useful when UDP is blocked by firewalls or VPNs. TCP
+provides reliable, ordered delivery and may work better through some
+network configurations. However, TCP does not support client IP address
+roaming the way UDP does.
+
+.TP
+.B \-\-tcp\-timeout=\fIMSEC\fP
+Set the TCP timeout in milliseconds (100-1000). The default is 500.
+This option only applies when using TCP transport (\-\-protocol=tcp).
+Lower values provide lower latency but may cause issues on high-latency
+or lossy connections. Higher values are more tolerant of network issues
+but may feel less responsive.
 
 .TP
 .B \-\-no\-init
@@ -309,6 +331,17 @@ control character, not with a printable representation such as "^B".
 .B MOSH_PREDICTION_DISPLAY
 Controls local echo as described above.  The command-line flag
 overrides this variable.
+
+.TP
+.B MOSH_PROTOCOL
+Controls the transport protocol (tcp or udp).  The command-line flag
+\-\-protocol overrides this variable.  The default is udp.
+
+.TP
+.B MOSH_TCP_TIMEOUT
+Sets the TCP timeout in milliseconds (100-1000).  The command-line flag
+\-\-tcp-timeout overrides this variable.  The default is 500.
+This variable only affects TCP transport.
 
 .TP
 .B MOSH_TITLE_NOPREFIX

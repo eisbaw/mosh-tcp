@@ -112,10 +112,15 @@ qq{Usage: $0 [options] [--] [user@]host [command...]
         --family=prefer-inet use all network types, but try IPv4 first [default]
         --family=prefer-inet6 use all network types, but try IPv6 first
 -p PORT[:PORT2]
-        --port=PORT[:PORT2]  server-side UDP port or range
+        --port=PORT[:PORT2]  server-side port or range
                                 (No effect on server-side SSH port)
         --bind-server={ssh|any|IP}  ask the server to reply from an IP address
                                        (default: "ssh")
+
+        --protocol=PROTOCOL  transport protocol: tcp or udp
+                                (default: "udp")
+        --tcp-timeout=MSEC   TCP timeout in milliseconds (100-1000)
+                                (default: 500, only applies to TCP)
 
         --ssh=COMMAND        ssh command to run when setting up session
                                 (example: "ssh -p 2222")

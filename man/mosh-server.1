@@ -25,6 +25,8 @@ new
 [\-i \fIIP\fP]
 [\-p \fIPORT\fP[:\fIPORT2\fP]]
 [\-c \fICOLORS\fP]
+[\-P \fIPROTOCOL\fP]
+[\-T \fIMSEC\fP]
 [\-\- command...]
 .br
 .SH DESCRIPTION
@@ -32,14 +34,14 @@ new
 .BR mosh(1)
 remote terminal application.
 
-\fBmosh-server\fP binds to a high UDP port and chooses an encryption
-key to protect the session. It prints both on standard output,
-detaches from the terminal, and waits for the \fBmosh-client\fP to
-establish a connection. It will exit if no client has contacted
-it within 60 seconds.
+\fBmosh-server\fP binds to a high port and chooses an encryption
+key to protect the session. It prints the transport protocol, port,
+and key on standard output, detaches from the terminal, and waits for
+the \fBmosh-client\fP to establish a connection. It will exit if no
+client has contacted it within 60 seconds.
 
-By default, \fBmosh-server\fP binds to a port between 60000 and
-61000 and executes the user's login shell.
+By default, \fBmosh-server\fP uses UDP transport, binds to a port
+between 60000 and 61000, and executes the user's login shell.
 
 On platforms with \fButempter\fP, \fBmosh-server\fP maintains an entry
 in the
@@ -71,12 +73,28 @@ IP address of the local interface to bind (for multihomed hosts)
 
 .TP
 .B \-p \fIPORT\fP[:\fIPORT2\fP]
-UDP port number or port-range to bind.  \fB\-p 0\fP will let the
-operating system pick an available UDP port.
+Port number or port-range to bind.  \fB\-p 0\fP will let the
+operating system pick an available port.
 
 .TP
 .B \-c \fICOLORS\fP
 Number of colors to advertise to applications through TERM (e.g. 8, 256)
+
+.TP
+.B \-P \fIPROTOCOL\fP
+Transport protocol to use: tcp or udp.  The default is udp.
+
+TCP transport works better through firewalls and VPNs that block UDP.
+When using TCP, if the client's IP address changes (e.g., switching from
+WiFi to cellular), there will be a 1-2 second pause as the connection
+re-establishes automatically, but the session state is fully preserved.
+This is different from UDP which switches instantly, but the end result
+is the same: your session survives network changes.
+
+.TP
+.B \-T \fIMSEC\fP
+TCP timeout in milliseconds (100-1000).  The default is 500.
+This option only applies when using TCP transport (\-P tcp).
 
 .TP
 .B \-l \fINAME=VALUE\fP
@@ -126,12 +144,18 @@ sessions.
 .nf
 $ mosh-server
 
-MOSH CONNECT 60001 UAkFedSsVJs2LfMeKyQB5g
+MOSH CONNECT udp 60001 UAkFedSsVJs2LfMeKyQB5g
 
 mosh-server (mosh 1.1)
 [...] (copyright notice omitted)
 
 [mosh-server detached, pid = 20443]
+
+
+$ mosh-server new -P tcp
+
+MOSH CONNECT tcp 60002 VBkGfeTtWKt3MgNfLzRC6h
+[mosh-server detached, pid = 20501]
 .fi
 
 .SH SEE ALSO
