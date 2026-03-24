@@ -61,10 +61,9 @@ template<class MyState>
 unsigned int TransportSender<MyState>::send_interval( void ) const
 {
   /* TCP: kernel handles congestion control, use shorter interval.
-     Not 1ms — that floods the connection and bloats SRTT.
-     5ms is responsive enough for interactive use without overwhelming TCP. */
+     Use half the UDP minimum (10ms) — responsive but not flooding. */
   if ( connection->is_reliable_transport() ) {
-    return 5;
+    return SEND_INTERVAL_MIN / 2;
   }
 
   int SEND_INTERVAL = lrint( ceil( connection->get_SRTT() / 2.0 ) );
