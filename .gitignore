@@ -40,3 +40,4 @@ src/include/stamp-h1
 /scripts/mosh
 src/include/version.h
 test-nonblocking-reconnect
+/result

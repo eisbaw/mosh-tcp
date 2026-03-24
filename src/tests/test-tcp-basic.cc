@@ -1,10 +1,14 @@
 /*
     Test program for TCP connection functionality
 
-    This program tests the basic TCP connection implementation
-    by creating a server and client that exchange messages.
+    Tests basic TCP server creation and properties,
+    then tests a real client-server connection with message exchange
+    using a pipe to coordinate the key and port between processes.
 */
 
+#include <cerrno>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <unistd.h>
@@ -16,147 +20,209 @@
 using namespace Network;
 using namespace std;
 
-void test_server() {
-    try {
-        cerr << "[Server] Starting on port 60050..." << endl;
+static int test_server_creation()
+{
+  cerr << "--- Test: Server creation and properties ---" << endl;
 
-        TCPConnection server("127.0.0.1", "60050");
-        server.set_verbose(2);
+  try {
+    TCPConnection server( "127.0.0.1", "0" );
+    server.set_verbose( 0 );
 
-        cerr << "[Server] Listening on port: " << server.port() << endl;
-        cerr << "[Server] Key: " << server.get_key() << endl;
+    string port = server.port();
+    string key = server.get_key();
 
-        // Wait for connection and receive messages
-        for (int i = 0; i < 5; i++) {
-            cerr << "[Server] Waiting for message " << i << "..." << endl;
-            string msg = server.recv();
-
-            if (!msg.empty()) {
-                cerr << "[Server] Received: '" << msg << "' (" << msg.size() << " bytes)" << endl;
-
-                // Echo back
-                string reply = "Echo: " + msg;
-                server.send(reply);
-                cerr << "[Server] Sent reply: '" << reply << "'" << endl;
-            } else {
-                cerr << "[Server] No message (timeout or waiting for connection)" << endl;
-            }
-
-            sleep(1);
-        }
-
-        cerr << "[Server] Test complete" << endl;
-
-    } catch (const exception& e) {
-        cerr << "[Server] ERROR: " << e.what() << endl;
-        exit(1);
+    if ( port.empty() || port == "0" ) {
+      cerr << "FAIL: server port is empty or zero" << endl;
+      return 1;
     }
+    cerr << "  Port: " << port << endl;
+
+    if ( key.empty() ) {
+      cerr << "FAIL: server key is empty" << endl;
+      return 1;
+    }
+    cerr << "  Key length: " << key.size() << endl;
+
+    int mtu = server.get_MTU();
+    if ( mtu <= 0 ) {
+      cerr << "FAIL: MTU is " << mtu << endl;
+      return 1;
+    }
+    cerr << "  MTU: " << mtu << endl;
+
+    auto fds = server.fds();
+    if ( fds.empty() ) {
+      cerr << "FAIL: no file descriptors" << endl;
+      return 1;
+    }
+    cerr << "  FDs: " << fds.size() << endl;
+
+    uint64_t t = server.timeout();
+    cerr << "  Timeout: " << t << "ms" << endl;
+
+    cerr << "  PASS" << endl;
+    return 0;
+
+  } catch ( const exception& e ) {
+    cerr << "FAIL: " << e.what() << endl;
+    return 1;
+  }
 }
 
-void test_client(const string& key) {
+static int test_client_server_exchange()
+{
+  cerr << "--- Test: Client-server message exchange ---" << endl;
+
+  /* Pipe for server to send port+key to client */
+  int pipefd[2];
+  if ( pipe( pipefd ) < 0 ) {
+    cerr << "FAIL: pipe() failed: " << strerror( errno ) << endl;
+    return 1;
+  }
+
+  pid_t pid = fork();
+  if ( pid < 0 ) {
+    cerr << "FAIL: fork() failed" << endl;
+    return 1;
+  }
+
+  if ( pid == 0 ) {
+    /* Child: server */
+    close( pipefd[0] ); /* close read end */
+
     try {
-        // Give server time to start
-        sleep(2);
+      TCPConnection server( "127.0.0.1", "0" );
+      server.set_verbose( 0 );
 
-        cerr << "[Client] Connecting to 127.0.0.1:60050..." << endl;
-        cerr << "[Client] Using key: " << key << endl;
+      /* Send port and key to parent via pipe */
+      string info = server.port() + "\n" + server.get_key() + "\n";
+      ssize_t written = write( pipefd[1], info.c_str(), info.size() );
+      close( pipefd[1] );
+      if ( written < 0 ) {
+        _exit( 1 );
+      }
 
-        TCPConnection client(key.c_str(), "127.0.0.1", "60050");
-        client.set_verbose(2);
-
-        cerr << "[Client] Connected!" << endl;
-
-        // Send test messages
-        for (int i = 0; i < 3; i++) {
-            string msg = "Test message " + to_string(i);
-            cerr << "[Client] Sending: '" << msg << "'" << endl;
-            client.send(msg);
-
-            // Wait for reply
-            sleep(1);
-            string reply = client.recv();
-            if (!reply.empty()) {
-                cerr << "[Client] Received reply: '" << reply << "'" << endl;
-            } else {
-                cerr << "[Client] No reply received" << endl;
-            }
+      /* Wait for a message from client */
+      int attempts = 0;
+      string msg;
+      while ( attempts < 50 ) {
+        msg = server.recv();
+        if ( !msg.empty() ) {
+          break;
         }
+        usleep( 100000 ); /* 100ms */
+        attempts++;
+      }
 
-        cerr << "[Client] Test complete" << endl;
+      if ( msg.empty() ) {
+        cerr << "[Server] No message received after " << attempts << " attempts" << endl;
+        _exit( 1 );
+      }
 
-    } catch (const exception& e) {
-        cerr << "[Client] ERROR: " << e.what() << endl;
-        exit(1);
+      cerr << "[Server] Received: '" << msg << "'" << endl;
+
+      /* Echo back */
+      server.send( "Echo:" + msg );
+
+      /* Give client time to receive the reply */
+      usleep( 500000 );
+      _exit( 0 );
+
+    } catch ( const exception& e ) {
+      cerr << "[Server] ERROR: " << e.what() << endl;
+      _exit( 1 );
     }
-}
+  }
 
-int main() {
-    cerr << "=== TCP Connection Basic Test ===" << endl;
+  /* Parent: client */
+  close( pipefd[1] ); /* close write end */
 
-    // Fork to create server and client processes
-    pid_t pid = fork();
+  int result = 1;
 
-    if (pid < 0) {
-        cerr << "Fork failed" << endl;
-        return 1;
+  try {
+    /* Read port and key from pipe */
+    char buf[512];
+    ssize_t n = read( pipefd[0], buf, sizeof( buf ) - 1 );
+    close( pipefd[0] );
+    if ( n <= 0 ) {
+      cerr << "FAIL: could not read port/key from server" << endl;
+      kill( pid, SIGTERM );
+      wait( NULL );
+      return 1;
+    }
+    buf[n] = '\0';
+
+    string data( buf );
+    size_t nl = data.find( '\n' );
+    if ( nl == string::npos ) {
+      cerr << "FAIL: malformed server info" << endl;
+      kill( pid, SIGTERM );
+      wait( NULL );
+      return 1;
     }
 
-    if (pid == 0) {
-        // Child process - run server
-        test_server();
-        return 0;
+    string port = data.substr( 0, nl );
+    string key = data.substr( nl + 1 );
+    /* Remove trailing newline from key */
+    if ( !key.empty() && key.back() == '\n' ) {
+      key.pop_back();
+    }
+
+    cerr << "[Client] Connecting to 127.0.0.1:" << port << endl;
+
+    TCPConnection client( key.c_str(), "127.0.0.1", port.c_str() );
+    client.set_verbose( 0 );
+
+    /* Send a test message */
+    client.send( "Hello" );
+
+    /* Wait for echo reply */
+    string reply;
+    for ( int i = 0; i < 50; i++ ) {
+      reply = client.recv();
+      if ( !reply.empty() ) {
+        break;
+      }
+      usleep( 100000 ); /* 100ms */
+    }
+
+    if ( reply == "Echo:Hello" ) {
+      cerr << "[Client] Got expected reply: '" << reply << "'" << endl;
+      result = 0;
+    } else if ( reply.empty() ) {
+      cerr << "[Client] FAIL: no reply received" << endl;
     } else {
-        // Parent process - get server's key and run client
-
-        // The server generates a random key, but for testing we need to
-        // coordinate. Let's use a pipe to send the key from server to client.
-        // For now, let's use a simpler approach: create the server first,
-        // extract its key, then create the client.
-
-        // Actually, this is tricky with fork. Let's use a different approach:
-        // Create server in parent, extract key, then fork for client.
-
-        // Wait a bit for server to start
-        sleep(3);
-
-        // We can't easily get the server's key from the child process.
-        // Let's use a fixed key for testing instead.
-
-        cerr << "[Main] Server started in child process (PID " << pid << ")" << endl;
-
-        // For now, we need to modify the approach. Let's kill the child
-        // and use a different testing strategy.
-
-        kill(pid, SIGTERM);
-        wait(NULL);
-
-        cerr << "\n=== Alternative Test: Single Process ===" << endl;
-        cerr << "Testing server creation..." << endl;
-
-        try {
-            // Test 1: Server creation
-            TCPConnection server("127.0.0.1", "60051");
-            server.set_verbose(2);
-            cerr << "✓ Server created successfully" << endl;
-            cerr << "  Port: " << server.port() << endl;
-            cerr << "  Key: " << server.get_key() << endl;
-            cerr << "  MTU: " << server.get_MTU() << endl;
-            cerr << "  SRTT: " << server.get_SRTT() << endl;
-
-            // Test 2: FDs
-            auto fds = server.fds();
-            cerr << "✓ FDs: " << fds.size() << " file descriptors" << endl;
-
-            // Test 3: Timeout
-            cerr << "✓ Timeout: " << server.timeout() << "ms" << endl;
-
-            cerr << "\n✅ Basic server tests passed!" << endl;
-
-        } catch (const exception& e) {
-            cerr << "❌ Server test failed: " << e.what() << endl;
-            return 1;
-        }
-
-        return 0;
+      cerr << "[Client] FAIL: unexpected reply '" << reply << "'" << endl;
     }
+
+  } catch ( const exception& e ) {
+    cerr << "[Client] ERROR: " << e.what() << endl;
+  }
+
+  /* Wait for server child */
+  int status;
+  waitpid( pid, &status, 0 );
+
+  if ( result == 0 && WIFEXITED( status ) && WEXITSTATUS( status ) == 0 ) {
+    cerr << "  PASS" << endl;
+    return 0;
+  }
+
+  if ( result == 0 ) {
+    cerr << "  FAIL: server exited with error" << endl;
+  }
+  return 1;
+}
+
+int main()
+{
+  cerr << "=== TCP Basic Tests ===" << endl;
+
+  int failures = 0;
+
+  failures += test_server_creation();
+  failures += test_client_server_exchange();
+
+  cerr << "\n=== " << ( failures == 0 ? "ALL PASSED" : "FAILURES DETECTED" ) << " ===" << endl;
+  return failures > 0 ? 1 : 0;
 }

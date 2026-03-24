@@ -35,11 +35,10 @@ displaytests = \
 	server-signal-timeout.test \
 	window-resize.test \
 	unicode-combine-fallback-assert.test \
-	unicode-later-combining.test \
-	window-resize.test
+	unicode-later-combining.test
 
 check_PROGRAMS = ocb-aes encrypt-decrypt base64 nonce-incr inpty is-utf8-locale test-connection test-tcp-basic test-tcp-clientserver
-TESTS = ocb-aes encrypt-decrypt base64 nonce-incr local.test $(displaytests)
+TESTS = ocb-aes encrypt-decrypt base64 nonce-incr test-tcp-basic test-tcp-clientserver test-connection local.test $(displaytests)
 XFAIL_TESTS = \
 	e2e-failure.test \
 	emulation-attributes-256color8.test
