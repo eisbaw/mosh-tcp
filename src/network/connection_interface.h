@@ -157,6 +157,24 @@ public:
    * @return Size of remote address in bytes
    */
   virtual socklen_t get_remote_addr_len( void ) const = 0;
+
+  /**
+   * Whether this is a reliable (TCP) transport.
+   *
+   * Used by TransportSender to skip application-level pacing
+   * when the kernel already handles congestion control.
+   *
+   * @return true for TCP, false for UDP
+   */
+  virtual bool is_reliable_transport( void ) const { return false; }
+
+  /**
+   * Whether the connection has buffered data that may contain complete messages.
+   *
+   * For TCP, checks if recv_buffer has data. For UDP, always false
+   * (each recv returns exactly one datagram).
+   */
+  virtual bool has_buffered_data( void ) const { return false; }
 };
 
 } // namespace Network

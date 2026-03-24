@@ -49,7 +49,10 @@ Transport<MyState, RemoteState>::Transport( std::unique_ptr<ConnectionInterface>
     received_states( 1, TimestampedState<RemoteState>( timestamp(), 0, initial_remote ) ),
     receiver_quench_timer( 0 ), last_receiver_state( initial_remote ), fragments(), verbose( 0 )
 {
-  /* helper constructor - connection already created */
+  /* TCP: skip application-level input batching, kernel handles pacing */
+  if ( connection->is_reliable_transport() ) {
+    sender.set_send_delay( 0 );
+  }
 }
 
 template<class MyState, class RemoteState>
@@ -141,114 +144,123 @@ Transport<MyState, RemoteState>* Transport<MyState, RemoteState>::create_with_pr
 template<class MyState, class RemoteState>
 void Transport<MyState, RemoteState>::recv( void )
 {
-  std::string s( connection->recv() );
-  if ( s.empty() ) {
-    return; /* No complete message yet (non-blocking TCP) */
-  }
-  Fragment frag( s );
-
-  if ( fragments.add_fragment( frag ) ) { /* complete packet */
-    Instruction inst = fragments.get_assembly();
-
-    if ( inst.protocol_version() != MOSH_PROTOCOL_VERSION ) {
-      throw NetworkException( "mosh protocol version mismatch", 0 );
+  /* Process all complete messages available in one call.
+     For TCP, multiple messages may be buffered in recv_buffer.
+     For UDP, each recv() returns exactly one datagram so the
+     loop body runs at most once. */
+  do {
+    std::string s( connection->recv() );
+    if ( s.empty() ) {
+      return; /* No complete message yet (non-blocking TCP) */
     }
+    Fragment frag( s );
 
-    sender.process_acknowledgment_through( inst.ack_num() );
+    if ( fragments.add_fragment( frag ) ) { /* complete packet */
+      Instruction inst = fragments.get_assembly();
 
-    /* inform network layer of roundtrip (end-to-end-to-end) connectivity */
-    connection->set_last_roundtrip_success( sender.get_sent_state_acked_timestamp() );
-
-    /* first, make sure we don't already have the new state */
-    for ( typename std::list<TimestampedState<RemoteState>>::iterator i = received_states.begin();
-          i != received_states.end();
-          i++ ) {
-      if ( inst.new_num() == i->num ) {
-        return;
+      if ( inst.protocol_version() != MOSH_PROTOCOL_VERSION ) {
+        throw NetworkException( "mosh protocol version mismatch", 0 );
       }
-    }
 
-    /* now, make sure we do have the old state */
-    bool found = 0;
-    typename std::list<TimestampedState<RemoteState>>::iterator reference_state = received_states.begin();
-    while ( reference_state != received_states.end() ) {
-      if ( inst.old_num() == reference_state->num ) {
-        found = true;
-        break;
-      }
-      reference_state++;
-    }
+      sender.process_acknowledgment_through( inst.ack_num() );
 
-    if ( !found ) {
-      //    fprintf( stderr, "Ignoring out-of-order packet. Reference state %d has been discarded or hasn't yet been
-      //    received.\n", int(inst.old_num) );
-      return; /* this is security-sensitive and part of how we enforce idempotency */
-    }
+      /* inform network layer of roundtrip (end-to-end-to-end) connectivity */
+      connection->set_last_roundtrip_success( sender.get_sent_state_acked_timestamp() );
 
-    /* Do not accept state if our queue is full */
-    /* This is better than dropping states from the middle of the
-       queue (as sender does), because we don't want to ACK a state
-       and then discard it later. */
-
-    process_throwaway_until( inst.throwaway_num() );
-
-    if ( received_states.size() > 1024 ) { /* limit on state queue */
-      uint64_t now = timestamp();
-      if ( now < receiver_quench_timer ) { /* deny letting state grow further */
-        if ( verbose ) {
-          fprintf(
-            stderr,
-            "[%u] Receiver queue full, discarding %d (malicious sender or long-unidirectional connectivity?)\n",
-            (unsigned int)( timestamp() % 100000 ),
-            (int)inst.new_num() );
+      /* first, make sure we don't already have the new state */
+      bool dup = false;
+      for ( typename std::list<TimestampedState<RemoteState>>::iterator i = received_states.begin();
+            i != received_states.end();
+            i++ ) {
+        if ( inst.new_num() == i->num ) {
+          dup = true;
+          break;
         }
-        return;
-      } else {
-        receiver_quench_timer = now + 15000;
       }
-    }
+      if ( dup ) {
+        continue; /* skip duplicate, try next buffered message */
+      }
 
-    /* apply diff to reference state */
-    TimestampedState<RemoteState> new_state = *reference_state;
-    new_state.timestamp = timestamp();
-    new_state.num = inst.new_num();
+      /* now, make sure we do have the old state */
+      bool found = 0;
+      typename std::list<TimestampedState<RemoteState>>::iterator reference_state = received_states.begin();
+      while ( reference_state != received_states.end() ) {
+        if ( inst.old_num() == reference_state->num ) {
+          found = true;
+          break;
+        }
+        reference_state++;
+      }
 
-    if ( !inst.diff().empty() ) {
-      new_state.state.apply_string( inst.diff() );
-    }
+      if ( !found ) {
+        continue; /* security-sensitive: enforce idempotency, try next */
+      }
 
-    /* Insert new state in sorted place */
-    for ( typename std::list<TimestampedState<RemoteState>>::iterator i = received_states.begin();
-          i != received_states.end();
-          i++ ) {
-      if ( i->num > new_state.num ) {
-        received_states.insert( i, new_state );
+      /* Do not accept state if our queue is full */
+      process_throwaway_until( inst.throwaway_num() );
+
+      if ( received_states.size() > 1024 ) { /* limit on state queue */
+        uint64_t now = timestamp();
+        if ( now < receiver_quench_timer ) { /* deny letting state grow further */
+          if ( verbose ) {
+            fprintf(
+              stderr,
+              "[%u] Receiver queue full, discarding %d (malicious sender or long-unidirectional connectivity?)\n",
+              (unsigned int)( timestamp() % 100000 ),
+              (int)inst.new_num() );
+          }
+          continue;
+        } else {
+          receiver_quench_timer = now + 15000;
+        }
+      }
+
+      /* apply diff to reference state */
+      TimestampedState<RemoteState> new_state = *reference_state;
+      new_state.timestamp = timestamp();
+      new_state.num = inst.new_num();
+
+      if ( !inst.diff().empty() ) {
+        new_state.state.apply_string( inst.diff() );
+      }
+
+      /* Insert new state in sorted place */
+      bool inserted = false;
+      for ( typename std::list<TimestampedState<RemoteState>>::iterator i = received_states.begin();
+            i != received_states.end();
+            i++ ) {
+        if ( i->num > new_state.num ) {
+          received_states.insert( i, new_state );
+          if ( verbose ) {
+            fprintf( stderr,
+                     "[%u] Received OUT-OF-ORDER state %d [ack %d]\n",
+                     (unsigned int)( timestamp() % 100000 ),
+                     (int)new_state.num,
+                     (int)inst.ack_num() );
+          }
+          inserted = true;
+          break;
+        }
+      }
+      if ( !inserted ) {
         if ( verbose ) {
           fprintf( stderr,
-                   "[%u] Received OUT-OF-ORDER state %d [ack %d]\n",
+                   "[%u] Received state %d [coming from %d, ack %d]\n",
                    (unsigned int)( timestamp() % 100000 ),
                    (int)new_state.num,
+                   (int)inst.old_num(),
                    (int)inst.ack_num() );
         }
-        return;
+        received_states.push_back( new_state );
+      }
+      sender.set_ack_num( received_states.back().num );
+
+      sender.remote_heard( new_state.timestamp );
+      if ( !inst.diff().empty() ) {
+        sender.set_data_ack();
       }
     }
-    if ( verbose ) {
-      fprintf( stderr,
-               "[%u] Received state %d [coming from %d, ack %d]\n",
-               (unsigned int)( timestamp() % 100000 ),
-               (int)new_state.num,
-               (int)inst.old_num(),
-               (int)inst.ack_num() );
-    }
-    received_states.push_back( new_state );
-    sender.set_ack_num( received_states.back().num );
-
-    sender.remote_heard( new_state.timestamp );
-    if ( !inst.diff().empty() ) {
-      sender.set_data_ack();
-    }
-  }
+  } while ( connection->has_buffered_data() );
 }
 
 /* The sender uses throwaway_num to tell us the earliest received state that we need to keep around */

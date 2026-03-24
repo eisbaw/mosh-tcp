@@ -60,6 +60,11 @@ TransportSender<MyState>::TransportSender( ConnectionInterface* s_connection, My
 template<class MyState>
 unsigned int TransportSender<MyState>::send_interval( void ) const
 {
+  /* TCP: kernel handles congestion control, send immediately */
+  if ( connection->is_reliable_transport() ) {
+    return 1;
+  }
+
   int SEND_INTERVAL = lrint( ceil( connection->get_SRTT() / 2.0 ) );
   if ( SEND_INTERVAL < SEND_INTERVAL_MIN ) {
     SEND_INTERVAL = SEND_INTERVAL_MIN;

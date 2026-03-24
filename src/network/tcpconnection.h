@@ -194,6 +194,9 @@ public:
 
   std::string& get_send_error( void ) override { return send_error; }
 
+  bool is_reliable_transport( void ) const override { return true; }
+  bool has_buffered_data( void ) const override { return recv_buffer.size() >= sizeof( uint32_t ); }
+
   /* Configuration methods */
   void set_timeout( uint64_t ms );
   void set_verbose( unsigned int v ) { verbose = v; }
