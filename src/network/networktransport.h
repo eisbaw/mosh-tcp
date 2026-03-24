@@ -36,6 +36,7 @@
 #include <csignal>
 #include <ctime>
 #include <list>
+#include <memory>
 #include <string>
 #include <vector>
 #include <strings.h>
@@ -75,7 +76,7 @@ class Transport
 {
 private:
   /* the underlying, encrypted network connection */
-  ConnectionInterface* connection;
+  std::unique_ptr<ConnectionInterface> connection;
 
   /* sender side */
   TransportSender<MyState> sender;
@@ -91,7 +92,7 @@ private:
   unsigned int verbose;
 
   /* Helper constructors that take pre-created connection (for factory methods) */
-  Transport( ConnectionInterface* conn,
+  Transport( std::unique_ptr<ConnectionInterface> conn,
              MyState& initial_state,
              RemoteState& initial_remote );
 
@@ -107,6 +108,10 @@ public:
              const char* ip,
              const char* port );
   ~Transport();
+
+  /* Non-copyable (owns connection pointer) */
+  Transport( const Transport& ) = delete;
+  Transport& operator=( const Transport& ) = delete;
 
   /* Factory methods for protocol selection */
   static Transport* create_with_protocol( TransportProtocol protocol,

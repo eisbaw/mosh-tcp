@@ -75,6 +75,7 @@ TCPConnection::TCPConnection( const char* desired_ip, const char* desired_port )
     last_roundtrip_success( 0 ),
     send_error(),
     recv_buffer(),
+    send_buffer(),
     verbose( 0 )
 {
   /* Bind and listen for client connections */
@@ -113,6 +114,7 @@ TCPConnection::TCPConnection( const char* key_str, const char* ip, const char* p
     last_roundtrip_success( 0 ),
     send_error(),
     recv_buffer(),
+    send_buffer(),
     verbose( 0 )
 {
   /* Resolve server address */
@@ -256,9 +258,14 @@ void TCPConnection::accept_connection( void )
   connected = true;
   has_remote_addr = true;
 
-  /* Close listening socket - we only accept one connection */
-  close( listen_fd );
-  listen_fd = -1;
+  /* Keep listen_fd open so we can accept reconnections later */
+
+  /* Clear buffers to discard partial framing data from the old TCP stream.
+   * The Crypto::Session is intentionally preserved -- see reconnect() comment
+   * for the safety analysis.  The process-global nonce counter (Crypto::unique())
+   * ensures post-reconnect messages use fresh, unique nonces. */
+  recv_buffer.clear();
+  send_buffer.clear();
 
   /* Setup socket options */
   try {
@@ -362,6 +369,14 @@ void TCPConnection::connect_with_timeout( const Addr& addr, uint64_t timeout_ms 
 /* Setup socket options */
 void TCPConnection::setup( void )
 {
+  /* Ensure socket is in non-blocking mode.
+     Client path (connect_with_timeout) already sets this, but the server's
+     accepted fd does not inherit non-blocking from the listen socket. */
+  int flags = fcntl( fd, F_GETFL, 0 );
+  if ( flags < 0 || fcntl( fd, F_SETFL, flags | O_NONBLOCK ) < 0 ) {
+    throw NetworkException( "fcntl(O_NONBLOCK)", errno );
+  }
+
   setup_socket_options();
   set_socket_timeout( tcp_timeout );
 }
@@ -447,7 +462,36 @@ void TCPConnection::set_socket_timeout( uint64_t timeout_ms )
   }
 }
 
-/* Reconnect after connection loss (client mode only) - non-blocking version */
+/* Reconnect after connection loss (client mode only) - non-blocking version.
+ *
+ * Crypto safety across reconnect:
+ *
+ * The Crypto::Session object is intentionally NOT reset on reconnect.
+ * This is safe because:
+ *
+ * 1. Session::encrypt()/decrypt() are stateless with respect to nonces.
+ *    OCB mode uses the nonce provided in each Message directly; there is
+ *    no internal "expected next nonce" state in the Session object.
+ *
+ * 2. Nonce uniqueness is guaranteed by Crypto::unique(), a process-global
+ *    monotonically increasing counter (static in crypto.cc).  It survives
+ *    reconnect because it is not tied to any connection object.  After
+ *    reconnect, the sender simply continues with higher nonce values.
+ *
+ * 3. The recv_buffer and send_buffer are cleared on reconnect, discarding
+ *    any partially-received ciphertext from the old TCP stream.  This
+ *    prevents framing corruption (a partial length-prefix from the old
+ *    connection being combined with data from the new connection).
+ *
+ * 4. blocks_encrypted tracks cumulative blocks for the OCB 2^47 safety
+ *    limit.  It correctly persists across reconnect since the same key
+ *    is in use.
+ *
+ * Compare with UDP: UDP is connectionless and handles "reconnection"
+ * implicitly -- packets simply arrive from a new source address.  The
+ * same Crypto::Session object is used throughout, with the same
+ * process-global nonce counter.  TCP reconnect is analogous.
+ */
 void TCPConnection::reconnect( void )
 {
   if ( server ) {
@@ -483,8 +527,10 @@ void TCPConnection::reconnect( void )
       fprintf( stderr, "[TCP] Reconnected successfully after %u attempt(s)\n", reconnect_attempt + 1 );
     }
 
-    /* Clear receive buffer on reconnection */
+    /* Clear buffers to discard partial framing data from the old TCP stream.
+     * Crypto::Session persists intentionally -- see comment block above. */
     recv_buffer.clear();
+    send_buffer.clear();
 
     /* Reset reconnection state */
     reconnecting = false;
@@ -515,86 +561,30 @@ void TCPConnection::reconnect( void )
   }
 }
 
-/* Read exactly len bytes (blocking) */
-ssize_t TCPConnection::read_fully( void* buf, size_t len )
+/* Flush queued outgoing data (non-blocking) */
+void TCPConnection::flush_send_buffer( void )
 {
-  size_t total = 0;
-  char* ptr = (char*)buf;
-
-  while ( total < len ) {
-    ssize_t n = read( fd, ptr + total, len - total );
+  while ( !send_buffer.empty() ) {
+    /* Use send() with MSG_NOSIGNAL on Linux to prevent SIGPIPE when the
+       peer has closed the connection.  On macOS/BSD, SO_NOSIGPIPE is set
+       on the socket (see setup_socket_options), so plain write() is safe. */
+#ifdef MSG_NOSIGNAL
+    ssize_t n = ::send( fd, send_buffer.data(), send_buffer.size(), MSG_NOSIGNAL );
+#else
+    ssize_t n = write( fd, send_buffer.data(), send_buffer.size() );
+#endif
     if ( n > 0 ) {
-      total += n;
-    } else if ( n == 0 ) {
-      /* Connection closed */
-      throw NetworkException( "read: connection closed", 0 );
-    } else {
+      send_buffer.erase( 0, n );
+    } else if ( n < 0 ) {
       if ( errno == EINTR ) {
-        continue; /* Interrupted, try again */
-      } else if ( errno == EAGAIN || errno == EWOULDBLOCK ) {
-        /* Use poll to wait for data */
-        struct pollfd pfd;
-        pfd.fd = fd;
-        pfd.events = POLLIN;
-        int ret = poll( &pfd, 1, tcp_timeout );
-        if ( ret < 0 ) {
-          if ( errno == EINTR ) {
-            continue;
-          }
-          throw NetworkException( "poll", errno );
-        }
-        if ( ret == 0 ) {
-          throw NetworkException( "read timeout", ETIMEDOUT );
-        }
-        /* Data available, try reading again */
-      } else {
-        throw NetworkException( "read", errno );
+        continue;
       }
+      if ( errno == EAGAIN || errno == EWOULDBLOCK ) {
+        return; /* Kernel buffer full, try later */
+      }
+      throw NetworkException( "write", errno );
     }
   }
-
-  return total;
-}
-
-/* Write exactly len bytes (blocking) */
-ssize_t TCPConnection::write_fully( const void* buf, size_t len )
-{
-  size_t total = 0;
-  const char* ptr = (const char*)buf;
-
-  while ( total < len ) {
-    ssize_t n = write( fd, ptr + total, len - total );
-    if ( n > 0 ) {
-      total += n;
-    } else if ( n == 0 ) {
-      /* Should not happen with write */
-      throw NetworkException( "write: unexpected return of 0", 0 );
-    } else {
-      if ( errno == EINTR ) {
-        continue; /* Interrupted, try again */
-      } else if ( errno == EAGAIN || errno == EWOULDBLOCK ) {
-        /* Use poll to wait for writability */
-        struct pollfd pfd;
-        pfd.fd = fd;
-        pfd.events = POLLOUT;
-        int ret = poll( &pfd, 1, tcp_timeout );
-        if ( ret < 0 ) {
-          if ( errno == EINTR ) {
-            continue;
-          }
-          throw NetworkException( "poll", errno );
-        }
-        if ( ret == 0 ) {
-          throw NetworkException( "write timeout", ETIMEDOUT );
-        }
-        /* Socket writable, try again */
-      } else {
-        throw NetworkException( "write", errno );
-      }
-    }
-  }
-
-  return total;
 }
 
 /* Create a packet with payload */
@@ -668,17 +658,20 @@ void TCPConnection::send( const std::string& s )
     /* Encrypt */
     std::string encrypted = session.encrypt( m );
 
-    /* Send with length prefix - check size before conversion to uint32_t */
+    /* Check size before conversion to uint32_t */
     size_t encrypted_size = encrypted.size();
     if ( encrypted_size > MAX_MESSAGE_SIZE ) {
       throw NetworkException( "message too large", E2BIG );
     }
 
-    /* Safe to convert now that we've checked bounds */
+    /* Append length-prefixed message to send buffer */
     uint32_t len = static_cast<uint32_t>( encrypted_size );
     uint32_t net_len = htonl( len );
-    write_fully( &net_len, sizeof( net_len ) );
-    write_fully( encrypted.data(), encrypted.size() );
+    send_buffer.append( reinterpret_cast<const char*>( &net_len ), sizeof( net_len ) );
+    send_buffer.append( encrypted );
+
+    /* Try to drain the buffer immediately */
+    flush_send_buffer();
 
     send_error.clear();
 
@@ -691,12 +684,19 @@ void TCPConnection::send( const std::string& s )
       /* Client - try to reconnect and retry */
       reconnect();
       /* After reconnection, the caller will retry */
+      throw;
+    } else {
+      /* Server - connection lost, close data fd and wait for client to reconnect */
+      close_connection();
+      recv_buffer.clear();
+      send_buffer.clear();
+      /* Don't throw - let the main loop continue and accept a new connection */
+      return;
     }
-    throw;
   }
 }
 
-/* Receive one complete message */
+/* Receive one complete message (non-blocking) */
 std::string TCPConnection::recv_one( void )
 {
   /* Validate fd before use */
@@ -704,89 +704,106 @@ std::string TCPConnection::recv_one( void )
     throw NetworkException( "invalid file descriptor", EBADF );
   }
 
-  /* Read until we have a complete message */
-  while ( true ) {
-    /* Do we have a complete length prefix? */
-    if ( recv_buffer.size() >= sizeof( uint32_t ) ) {
-      /* Parse length */
-      uint32_t net_len;
-      memcpy( &net_len, recv_buffer.data(), sizeof( net_len ) );
-      uint32_t len = ntohl( net_len );
-
-      if ( len > MAX_MESSAGE_SIZE ) {
-        throw NetworkException( "received message too large", E2BIG );
-      }
-
-      /* Do we have a complete message? */
-      if ( recv_buffer.size() >= sizeof( uint32_t ) + len ) {
-        /* Extract message */
-        std::string encrypted = recv_buffer.substr( sizeof( uint32_t ), len );
-        recv_buffer.erase( 0, sizeof( uint32_t ) + len );
-
-        /* Decrypt */
-        Message m = session.decrypt( encrypted );
-        Packet p( m );
-
-        /* Update RTT */
-        update_rtt( p.timestamp_reply );
-
-        /* Save timestamp for echo */
-        saved_timestamp = p.timestamp;
-        saved_timestamp_received_at = timestamp();
-        expected_receiver_seq = p.seq;
-
-        /* Update last heard */
-        last_heard = timestamp();
-
-        if ( verbose > 2 ) {
-          fprintf( stderr, "[TCP] Received message: %u bytes\n", len );
-        }
-
-        return p.payload;
-      }
+  /* Attempt one non-blocking read to gather whatever data is available */
+  char buf[4096];
+  ssize_t n = read( fd, buf, sizeof( buf ) );
+  if ( n > 0 ) {
+    /* Protect against unbounded buffer growth */
+    if ( recv_buffer.size() + static_cast<size_t>( n ) > MAX_MESSAGE_SIZE + sizeof( uint32_t ) ) {
+      throw NetworkException( "receive buffer overflow", E2BIG );
     }
-
-    /* Need more data - read into buffer */
-    char buf[4096];
-    ssize_t n = read( fd, buf, sizeof( buf ) );
-
-    if ( n > 0 ) {
-      /* Protect against unbounded buffer growth */
-      if ( recv_buffer.size() + n > MAX_MESSAGE_SIZE + sizeof( uint32_t ) ) {
-        throw NetworkException( "receive buffer overflow - incomplete message too large", E2BIG );
-      }
-      recv_buffer.append( buf, n );
-    } else if ( n == 0 ) {
-      throw NetworkException( "read: connection closed", 0 );
+    recv_buffer.append( buf, n );
+  } else if ( n == 0 ) {
+    throw NetworkException( "read: connection closed", 0 );
+  } else {
+    if ( errno == EINTR ) {
+      /* Interrupted, no data this time - fall through to buffer check */
+    } else if ( errno == EAGAIN || errno == EWOULDBLOCK ) {
+      /* No data available right now - fall through to buffer check */
     } else {
-      if ( errno == EINTR ) {
-        continue;
-      } else if ( errno == EAGAIN || errno == EWOULDBLOCK ) {
-        /* Use poll to wait for data with timeout */
-        struct pollfd pfd;
-        pfd.fd = fd;
-        pfd.events = POLLIN;
-        int ret = poll( &pfd, 1, tcp_timeout );
-        if ( ret < 0 ) {
-          if ( errno == EINTR ) {
-            continue;
-          }
-          throw NetworkException( "poll", errno );
-        }
-        if ( ret == 0 ) {
-          /* Timeout - not an error, just no data yet */
-          return std::string();
-        }
-      } else {
-        throw NetworkException( "read", errno );
-      }
+      throw NetworkException( "read", errno );
     }
   }
+
+  /* Check if recv_buffer contains a complete message */
+  if ( recv_buffer.size() < sizeof( uint32_t ) ) {
+    return std::string(); /* Not enough data for length prefix yet */
+  }
+
+  uint32_t net_len;
+  memcpy( &net_len, recv_buffer.data(), sizeof( net_len ) );
+  uint32_t len = ntohl( net_len );
+
+  if ( len > MAX_MESSAGE_SIZE ) {
+    throw NetworkException( "received message too large", E2BIG );
+  }
+
+  if ( recv_buffer.size() < sizeof( uint32_t ) + len ) {
+    return std::string(); /* Incomplete message body, return and try later */
+  }
+
+  /* Extract complete message */
+  std::string encrypted = recv_buffer.substr( sizeof( uint32_t ), len );
+  recv_buffer.erase( 0, sizeof( uint32_t ) + len );
+
+  /* Decrypt -- uses the nonce embedded in the ciphertext.
+   * Crypto::Session has no internal nonce state; decryption succeeds as long as
+   * the key and nonce match what the sender used.  Nonce gaps (from messages
+   * lost during the old TCP connection) do not cause decryption failure. */
+  Message m = session.decrypt( encrypted );
+  Packet p( m );
+
+  /* Verify direction bit to prevent playback of our own messages */
+  if ( p.direction != ( server ? TO_SERVER : TO_CLIENT ) ) {
+    throw NetworkException( "received message with wrong direction", 0 );
+  }
+
+  /* Update RTT */
+  update_rtt( p.timestamp_reply );
+
+  /* Save timestamp for echo */
+  saved_timestamp = p.timestamp;
+  saved_timestamp_received_at = timestamp();
+
+  /* Track sequence for application-level replay awareness.  TCP's ordered
+   * reliable delivery means we should never see out-of-order packets in
+   * normal operation.  After reconnect, the sender's nonce counter will
+   * have advanced (Crypto::unique() is process-global), so p.seq will be
+   * higher than expected_receiver_seq -- this is expected and harmless. */
+  expected_receiver_seq = p.seq + 1;
+
+  /* Update last heard */
+  last_heard = timestamp();
+
+  if ( verbose > 2 ) {
+    fprintf( stderr, "[TCP] Received message: %u bytes\n", len );
+  }
+
+  return p.payload;
 }
 
 /* Receive a message */
 std::string TCPConnection::recv( void )
 {
+  /* Opportunistically drain pending writes on every event loop iteration */
+  if ( connected && !send_buffer.empty() ) {
+    try {
+      flush_send_buffer();
+    } catch ( const NetworkException& e ) {
+      if ( verbose > 0 ) {
+        fprintf( stderr, "[TCP] flush_send_buffer error: %s\n", e.what() );
+      }
+      if ( !server ) {
+        reconnect();
+      } else {
+        close_connection();
+        recv_buffer.clear();
+        send_buffer.clear();
+      }
+      return std::string();
+    }
+  }
+
   /* Server: accept connection if not connected yet */
   if ( server && !connected ) {
     accept_connection();
@@ -819,9 +836,9 @@ std::string TCPConnection::recv( void )
       /* Client - initiate reconnection (non-blocking) */
       reconnect();
     } else {
-      /* Server - connection lost, can't reconnect */
-      connected = false;
-      throw;
+      /* Server - connection lost, close data fd and wait for client to reconnect */
+      close_connection();
+      recv_buffer.clear();
     }
     return std::string();
   }
@@ -831,9 +848,11 @@ std::string TCPConnection::recv( void )
 const std::vector<int> TCPConnection::fds( void ) const
 {
   std::vector<int> result;
-  if ( server && !connected && listen_fd >= 0 ) {
+  if ( server && listen_fd >= 0 ) {
+    /* Always include listen_fd so we can detect new connection attempts */
     result.push_back( listen_fd );
-  } else if ( fd >= 0 ) {
+  }
+  if ( fd >= 0 ) {
     result.push_back( fd );
   }
   return result;
@@ -908,6 +927,7 @@ void TCPConnection::close_connection( void )
     fd = -1;
   }
   connected = false;
+  send_buffer.clear();
 }
 
 /* Check if connected */

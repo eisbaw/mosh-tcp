@@ -123,6 +123,9 @@ private:
   /* Message framing buffer */
   std::string recv_buffer; /* Accumulates partial messages */
 
+  /* Outgoing write queue */
+  std::string send_buffer; /* Queued outgoing data awaiting write */
+
   /* Verbosity */
   unsigned int verbose;
 
@@ -142,8 +145,7 @@ private:
   void reconnect( void ); /* Reconnect after connection loss */
 
   /* I/O helpers */
-  ssize_t read_fully( void* buf, size_t len );
-  ssize_t write_fully( const void* buf, size_t len );
+  void flush_send_buffer( void );
 
   /* Message framing */
   std::string recv_one( void ); /* Receive one complete message */

@@ -777,9 +777,10 @@ static void serve( int host_fd,
       /* poll for events */
       sel.clear_fds();
       std::vector<int> fd_list( network.fds() );
-      assert( fd_list.size() == 1 ); /* servers don't hop */
-      int network_fd = fd_list.back();
-      sel.add_fd( network_fd );
+      assert( fd_list.size() >= 1 ); /* UDP=1, TCP=1-2 (data + listen) */
+      for ( int network_fd : fd_list ) {
+        sel.add_fd( network_fd );
+      }
       if ( !network.shutdown_in_progress() ) {
         sel.add_fd( host_fd );
       }
@@ -794,7 +795,14 @@ static void serve( int host_fd,
       uint64_t time_since_remote_state = now - network.get_latest_remote_state().timestamp;
       std::string terminal_to_host;
 
-      if ( sel.read( network_fd ) ) {
+      bool network_ready = false;
+      for ( int nfd : fd_list ) {
+        if ( sel.read( nfd ) ) {
+          network_ready = true;
+          break;
+        }
+      }
+      if ( network_ready ) {
         /* packet received from the network */
         network.recv();
 

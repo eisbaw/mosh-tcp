@@ -42,10 +42,10 @@ using namespace Network;
 
 /* Helper constructor - takes pre-created connection (for factory methods) */
 template<class MyState, class RemoteState>
-Transport<MyState, RemoteState>::Transport( ConnectionInterface* conn,
+Transport<MyState, RemoteState>::Transport( std::unique_ptr<ConnectionInterface> conn,
                                             MyState& initial_state,
                                             RemoteState& initial_remote )
-  : connection( conn ), sender( connection, initial_state ),
+  : connection( std::move( conn ) ), sender( connection.get(), initial_state ),
     received_states( 1, TimestampedState<RemoteState>( timestamp(), 0, initial_remote ) ),
     receiver_quench_timer( 0 ), last_receiver_state( initial_remote ), fragments(), verbose( 0 )
 {
@@ -57,7 +57,7 @@ Transport<MyState, RemoteState>::Transport( MyState& initial_state,
                                             RemoteState& initial_remote,
                                             const char* desired_ip,
                                             const char* desired_port )
-  : connection( new UDPConnection( desired_ip, desired_port ) ), sender( connection, initial_state ),
+  : connection( new UDPConnection( desired_ip, desired_port ) ), sender( connection.get(), initial_state ),
     received_states( 1, TimestampedState<RemoteState>( timestamp(), 0, initial_remote ) ),
     receiver_quench_timer( 0 ), last_receiver_state( initial_remote ), fragments(), verbose( 0 )
 {
@@ -70,7 +70,7 @@ Transport<MyState, RemoteState>::Transport( MyState& initial_state,
                                             const char* key_str,
                                             const char* ip,
                                             const char* port )
-  : connection( new UDPConnection( key_str, ip, port ) ), sender( connection, initial_state ),
+  : connection( new UDPConnection( key_str, ip, port ) ), sender( connection.get(), initial_state ),
     received_states( 1, TimestampedState<RemoteState>( timestamp(), 0, initial_remote ) ),
     receiver_quench_timer( 0 ), last_receiver_state( initial_remote ), fragments(), verbose( 0 )
 {
@@ -80,7 +80,7 @@ Transport<MyState, RemoteState>::Transport( MyState& initial_state,
 template<class MyState, class RemoteState>
 Transport<MyState, RemoteState>::~Transport()
 {
-  delete connection;
+  /* unique_ptr handles connection cleanup */
 }
 
 /* Factory method for server */
@@ -94,20 +94,20 @@ Transport<MyState, RemoteState>* Transport<MyState, RemoteState>::create_with_pr
   uint64_t tcp_timeout_ms )
 {
   /* Create the correct connection type FIRST, before constructing Transport */
-  ConnectionInterface* conn = nullptr;
+  std::unique_ptr<ConnectionInterface> conn;
 
   if ( protocol == TransportProtocol::TCP ) {
-    TCPConnection* tcp_conn = new TCPConnection( desired_ip, desired_port );
+    std::unique_ptr<TCPConnection> tcp_conn( new TCPConnection( desired_ip, desired_port ) );
     if ( tcp_timeout_ms != 500 ) {
       tcp_conn->set_timeout( tcp_timeout_ms );
     }
-    conn = tcp_conn;
+    conn = std::move( tcp_conn );
   } else {
-    conn = new UDPConnection( desired_ip, desired_port );
+    conn.reset( new UDPConnection( desired_ip, desired_port ) );
   }
 
   /* Now construct Transport with the correct connection (sender gets correct pointer) */
-  return new Transport( conn, initial_state, initial_remote );
+  return new Transport( std::move( conn ), initial_state, initial_remote );
 }
 
 /* Factory method for client */
@@ -122,20 +122,20 @@ Transport<MyState, RemoteState>* Transport<MyState, RemoteState>::create_with_pr
   uint64_t tcp_timeout_ms )
 {
   /* Create the correct connection type FIRST, before constructing Transport */
-  ConnectionInterface* conn = nullptr;
+  std::unique_ptr<ConnectionInterface> conn;
 
   if ( protocol == TransportProtocol::TCP ) {
-    TCPConnection* tcp_conn = new TCPConnection( key_str, ip, port );
+    std::unique_ptr<TCPConnection> tcp_conn( new TCPConnection( key_str, ip, port ) );
     if ( tcp_timeout_ms != 500 ) {
       tcp_conn->set_timeout( tcp_timeout_ms );
     }
-    conn = tcp_conn;
+    conn = std::move( tcp_conn );
   } else {
-    conn = new UDPConnection( key_str, ip, port );
+    conn.reset( new UDPConnection( key_str, ip, port ) );
   }
 
   /* Now construct Transport with the correct connection (sender gets correct pointer) */
-  return new Transport( conn, initial_state, initial_remote );
+  return new Transport( std::move( conn ), initial_state, initial_remote );
 }
 
 template<class MyState, class RemoteState>
