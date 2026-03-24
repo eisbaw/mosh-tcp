@@ -592,8 +592,13 @@ Packet TCPConnection::new_packet( const std::string& s_payload )
 {
   uint16_t outgoing_timestamp_reply = -1;
 
-  if ( expected_receiver_seq != uint64_t( -1 ) ) {
-    outgoing_timestamp_reply = saved_timestamp;
+  uint64_t now = timestamp();
+
+  if ( now - saved_timestamp_received_at < 1000 ) { /* recent timestamp */
+    /* send "corrected" timestamp advanced by how long we held it */
+    outgoing_timestamp_reply = saved_timestamp + ( now - saved_timestamp_received_at );
+    saved_timestamp = -1;
+    saved_timestamp_received_at = 0;
   }
 
   Packet p( direction, timestamp16(), outgoing_timestamp_reply, s_payload );

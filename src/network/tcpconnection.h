@@ -66,8 +66,11 @@ private:
   static const uint64_t CONNECT_TIMEOUT = 1000;     /* ms */
   static const int RECONNECT_DELAY = 100;           /* ms between reconnect attempts */
 
-  /* TCP MTU - larger than UDP since kernel handles segmentation */
-  static const int DEFAULT_TCP_MTU = 8192;
+  /* TCP MTU - must fit within Crypto::Session::RECEIVE_MTU (2048) after
+     encryption overhead. Using 1400 to stay safely within limits:
+     2048 - 16(AEAD tag) - 8(nonce) - 4(timestamps) - 10(frag header) = 2010 max.
+     1400 leaves headroom and aligns with typical network MTU. */
+  static const int DEFAULT_TCP_MTU = 1400;
 
   /* Maximum message size (prevent memory exhaustion) */
   static const uint32_t MAX_MESSAGE_SIZE = 1048576; /* 1 MB */
