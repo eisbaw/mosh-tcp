@@ -142,6 +142,9 @@ template<class MyState, class RemoteState>
 void Transport<MyState, RemoteState>::recv( void )
 {
   std::string s( connection->recv() );
+  if ( s.empty() ) {
+    return; /* No complete message yet (non-blocking TCP) */
+  }
   Fragment frag( s );
 
   if ( fragments.add_fragment( frag ) ) { /* complete packet */
