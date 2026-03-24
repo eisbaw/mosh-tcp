@@ -195,7 +195,16 @@ public:
   std::string& get_send_error( void ) override { return send_error; }
 
   bool is_reliable_transport( void ) const override { return true; }
-  bool has_buffered_data( void ) const override { return recv_buffer.size() >= sizeof( uint32_t ); }
+  bool has_buffered_data( void ) const override
+  {
+    if ( recv_buffer.size() < sizeof( uint32_t ) ) {
+      return false;
+    }
+    uint32_t net_len;
+    memcpy( &net_len, recv_buffer.data(), sizeof( net_len ) );
+    uint32_t len = ntohl( net_len );
+    return recv_buffer.size() >= sizeof( uint32_t ) + len;
+  }
 
   /* Configuration methods */
   void set_timeout( uint64_t ms );
